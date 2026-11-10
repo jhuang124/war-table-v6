@@ -59,7 +59,7 @@ import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { attackLine, attackOdds, attackSources, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
+import { attackLine, attackOdds, attackSources, youreLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
 import {
   buildReplay,
   emptyStory,
@@ -2325,7 +2325,13 @@ class Controller {
       title: `${upper(poss(name))} TURN`,
       // v5.1 A: the turn passes with this one line in the seat's pigment, ~1.5 s: "Sam's turn · 7 armies" (no cover,
       // no cup). The round lives in the dock; a resumed mid-turn says whose turn only.
-      line: armiesIn === null ? `${poss(name)} turn` : `${poss(name)} turn${SEP}${armies(armiesIn)}`,
+      // v6: a person's first turn of the game (round 1) names their colour: "You're Vermilion · 3 armies".
+      line:
+        armiesIn === null
+          ? `${poss(name)} turn`
+          : round === 1 && s.players[player]?.kind === 'human'
+            ? `${youreLine(s, player)}${SEP}${armies(armiesIn)}`
+            : `${poss(name)} turn${SEP}${armies(armiesIn)}`,
       sub: armiesIn === null ? '' : `+${armiesIn} ${armiesIn === 1 ? 'army' : 'armies'}`,
       recap,
       seat: seatRef(s, player),

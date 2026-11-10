@@ -37,10 +37,15 @@ export const QUIET_LINE = `No attacks on the opening turn${SEP}fortify or end yo
  * 'You're Vermilion · place 3 armies'; a seat with its own name: 'John · you're Vermilion · place 3 armies'. On the
  * quiet opening it says so up front: '… · place 3 · no attacks this turn'.
  */
-export function firstTurnLine(s: GameState, me: number, remaining: number): string {
+/** "You're Vermilion" (a seat named for its colour) or "John · you're Vermilion". */
+export function youreLine(s: GameState, me: number): string {
   const p = s.players[me];
   const colour = (PLAYER_COLORS as Record<string, { name: string } | undefined>)[p.color]?.name ?? p.name;
-  const who = p.name.trim().toLowerCase() === colour.toLowerCase() ? `You're ${colour}` : `${p.name}${SEP}you're ${colour}`;
+  return p.name.trim().toLowerCase() === colour.toLowerCase() ? `You're ${colour}` : `${p.name}${SEP}you're ${colour}`;
+}
+
+export function firstTurnLine(s: GameState, me: number, remaining: number): string {
+  const who = youreLine(s, me);
   return attacksLocked(s) ? `${who}${SEP}place ${remaining}${SEP}no attacks this turn` : `${who}${SEP}place ${armies(remaining)}`;
 }
 
