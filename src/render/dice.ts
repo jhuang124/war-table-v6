@@ -17,8 +17,14 @@
 // matched pair lands together), each touching down with its own squash and bone click; the verdict reads pair
 // by pair: a GOLD hairline draws in 120 ms (the one gold moves off the board's stroke onto "what's happening
 // now"), then the loser of that pair takes its ink splash and dims (`onPair`, so the board ticks that loss).
+// [v6 feel] (_claude/v6/audit/feel.md rows 10, 16) the dead half-second is gone: the hush comes BEFORE the last die
+// lands (it hangs a breath in the air), the first pair's verdict lands within ~120 ms of the dice settling, the
+// pairs land 160 ms apart (two beats, not one), each loser takes its splash in the very frame its hairline
+// arrives. Both sides' dice carry their owner's pigment (edge, pips and a faint wash), so attacker and defender
+// read at a glance. A blitz's final roll no longer re-pours from an empty tray: the dice already there hop hard
+// onto their last faces. Numbers: anim.ts FIGHT (one table, shared with the controller's timing model).
 import * as THREE from 'three';
-import { Animator, ease, type Run } from './anim';
+import { Animator, ease, FIGHT, verdictMs, type Run } from './anim';
 import { inkRingTexture, inkSplashTexture } from './textures';
 import { GOLD, hexToRgb } from './util';
 import type { PlayerPalette } from '../shared/palette';
@@ -99,7 +105,7 @@ function dieOutline(ctx: CanvasRenderingContext2D, S: number, inset: number, see
   ctx.closePath();
 }
 /** A painted die face: bone, a soft flat mottle, a brushed edge, ink pips. Transparent outside the die. */
-function paintDieFace(value: number, edge: string, pip: string, S = 128): THREE.CanvasTexture {
+function paintDieFace(value: number, edge: string, pip: string, S = 128, tint: string | null = null): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const ctx = c.getContext('2d')!;
@@ -116,6 +122,12 @@ function paintDieFace(value: number, edge: string, pip: string, S = 128): THREE.
     ctx.beginPath();
     ctx.ellipse(S * h01(i, value, 2), S * h01(i, value, 4), S * (0.12 + 0.2 * h01(i, value, 5)), S * (0.08 + 0.12 * h01(i, value, 6)), h01(i, value, 7) * 3, 0, Math.PI * 2);
     ctx.fill();
+  }
+  // [v6] the owner's pigment as a faint wash over the bone (whose dice these are, at a glance)
+  if (tint) {
+    ctx.globalAlpha = 0.26;
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, S, S);
   }
   ctx.restore();
   ctx.globalAlpha = 0.92;
@@ -163,16 +175,17 @@ function paintDieShadow(S = 64): THREE.CanvasTexture {
 }
 
 const TILT = -0.42; // tray pitch (top edge recedes)
-/** The verdict's held stillness (B §4): after the dice settle, nothing moves, then the verdict. */
-export const VERDICT_SILENCE_MS = 250;
+/**
+ * v5's held stillness after the dice settled. [v6] Retired: the hush now comes before the last die lands
+ * (FIGHT.HUSH_LEAD) and the verdict follows the settle at once. Kept as the hush's length for old callers.
+ */
+export const VERDICT_SILENCE_MS = FIGHT.HUSH_LEAD;
 /**
  * A full roll's tumble and settle (single, repeat, a blitz's final roll). 2026-09-30: the tumble slowed
  * 380 → 450; the settle stays 100 (120 measured 1249 ms against the 1250 budget in the game flow).
  */
 export const DICE_TUMBLE_MS = 450;
 export const DICE_SETTLE_MS = 100;
-/** [fight v5] The verdict after the hush (pair hairlines + splashes): 260 → 240 for headroom under the 1.25 s budget. */
-const VERDICT_MS = 220; // 240 → 220: the line's per-pair tick adds a frame; keeps a single roll under 1.25 s
 /** The ring brushes itself on (INK2 §2.2 t = 0): 220 ms, clockwise from the west. Reduced motion: a 150 ms fade. */
 const RING_DRAW_MS = 220;
 /** The ring's ink (`--coast`, silver on indigo) and the wash inside it (the deep paper). */
@@ -294,12 +307,18 @@ export interface RollSpec {
    */
   stagger?: number;
   /**
+   * [v6] this roll decides the fight (the defender's last army falls): the final hairline draws slower
+   * (FIGHT.HAIR_DECISIVE). The hit-stop that follows is the conquest's, not the roll's.
+   */
+  decisive?: boolean;
+  /**
    * [fight v5] Pair `k`'s verdict lands (full rolls: one pair after another as its gold hairline arrives; a
    * blitz's middle rolls: every pair at once). `attackerWins` = the attacker's die beat the defender's.
    */
   onPair?: (k: number, attackerWins: boolean) => void;
 }
 
+const VERDICT_LEAD = FIGHT.VERDICT_LEAD;
 /** [fight v5] The verdict hairline draws in this long (1×), pairs a little apart (PROPOSAL §4 A). */
 export const HAIR_DRAW_MS = 120;
 
@@ -534,12 +553,15 @@ export class DiceTray {
     this.ring.scale.set(qw, qh * k, 1);
   }
 
-  /** The six painted faces for a side: the attacker's take its seat's pigment on the edge and pips. */
+  /**
+   * The six painted faces for a side. [v6] Both sides carry their owner's pigment (ux-desktop finding 7): the
+   * edge and a faint wash in the seat's base; the attacker's pips in its deep tone, the defender's in the ink.
+   */
   private faces(p: PlayerPalette, attacker: boolean): THREE.Texture[] {
-    const key = attacker ? `a:${p.id}` : 'd';
+    const key = attacker ? `a:${p.id}` : `d:${p.id}`;
     let f = this.faceCache.get(key);
     if (!f) {
-      f = [1, 2, 3, 4, 5, 6].map((v) => (attacker ? paintDieFace(v, p.base, p.deep) : paintDieFace(v, DIE_INK, DIE_INK)));
+      f = [1, 2, 3, 4, 5, 6].map((v) => (attacker ? paintDieFace(v, p.base, p.deep, 128, p.base) : paintDieFace(v, p.base, DIE_INK, 128, p.base)));
       this.faceCache.set(key, f);
     }
     return f;
@@ -586,7 +608,7 @@ export class DiceTray {
     this.opacity = v;
     this.ringMat.uniforms.uAlpha.value = v;
     for (const d of this.dice) this.applyDie(d);
-    for (const h of this.hairs) h.mat.uniforms.uOpacity.value = Math.min(h.mat.uniforms.uOpacity.value, v * 0.8);
+    for (const h of this.hairs) h.mat.uniforms.uOpacity.value = Math.min(h.mat.uniforms.uOpacity.value, v * 0.95);
     this.root.visible = v > 0.002;
   }
 
@@ -698,7 +720,8 @@ export class DiceTray {
     const y0 = a.pos.y + s * 0.62;
     const apex = a.pos.y + s * (0.86 + 0.2 * i);
     const N = 40;
-    const w = Math.max(1.3, s * 0.028);
+    // [v6] a touch heavier (v5's 0.028 read as faint at couch distance: feel.md row 10)
+    const w = Math.max(1.6, s * 0.04);
     const pos: number[] = [];
     const us: number[] = [];
     const idx: number[] = [];
@@ -734,7 +757,7 @@ export class DiceTray {
     h.mesh.geometry = g;
     h.mat.uniforms.uFromEnd.value = aWins ? 0 : 1;
     h.mat.uniforms.uProgress.value = 1.05;
-    h.mat.uniforms.uOpacity.value = 0.8;
+    h.mat.uniforms.uOpacity.value = 0.95;
     h.mesh.visible = true;
   }
 
@@ -787,6 +810,8 @@ export class DiceTray {
   }
 
   private async rollInner(spec: RollSpec): Promise<void> {
+    // [v6] are dice already lying in the tray (a blitz's middles left them)? Then the final hops, it doesn't re-pour
+    const hadDice = this.shown && this.opacity > 0.5 && this.dice.some((d) => d.active && d.alpha > 0.5);
     this.show(spec.reduced);
     const { atk, def } = this.prepare(spec);
     const all = [...atk, ...def];
@@ -807,14 +832,19 @@ export class DiceTray {
       const hair = this.hairs.slice(0, full ? pairs : 0);
       for (const h of hair) h.mat.uniforms.uProgress.value = 0;
       const fired = new Set<number>();
-      const fire = (k: number) => {
+      const firedAt: number[] = [];
+      const fire = (k: number, t: number) => {
         if (fired.has(k)) return;
         fired.add(k);
+        firedAt[k] = t;
         spec.onPair?.(k, aw(k));
       };
-      if (!full) for (let k = 0; k < pairs; k++) fire(k);
-      // pair k's hairline starts at k·gap; its loser dims from the moment it arrives to the verdict's end
-      const gap = full && pairs > 1 ? Math.max(0, Math.min(70, (ms - HAIR_DRAW_MS - 60) / (pairs - 1))) : 0;
+      if (!full) for (let k = 0; k < pairs; k++) fire(k, 0);
+      // [v6] pair k's hairline starts at k·PAIR_GAP and draws in HAIR (the decisive roll's last pair: HAIR_DECISIVE);
+      // the moment it arrives the loser takes its splash (the same frame as the board's knock: onPair).
+      // (one pair: the first verdict is the last too, and it still lands ≤ 150 ms after the click: the hit-stop marks it)
+      const hairMs = (k: number) => (spec.decisive && pairs > 1 && k === pairs - 1 ? FIGHT.HAIR_DECISIVE : FIGHT.HAIR);
+      const start = (k: number) => (full ? k * FIGHT.PAIR_GAP : 0);
       await this.anim.tween({
         ms,
         ease: ease.linear,
@@ -830,19 +860,26 @@ export class DiceTray {
               lose.splashA = 0.6 * raw;
               continue;
             }
-            const t0 = k * gap;
-            const arrive = t0 + HAIR_DRAW_MS;
-            if (hair[k]) hair[k].mat.uniforms.uProgress.value = Math.min(1.05, Math.max(0, ((t - t0) / HAIR_DRAW_MS) * 1.05));
-            if (t >= arrive) fire(k);
-            const w = t >= arrive ? Math.min(1, (t - arrive) / Math.max(40, ms - arrive)) : 0;
+            const t0 = start(k);
+            const hm = hairMs(k);
+            const arrive = t0 + hm;
+            if (hair[k]) hair[k].mat.uniforms.uProgress.value = Math.min(1.05, Math.max(0, ((t - t0) / hm) * 1.05));
+            if (t >= arrive) fire(k, t === Infinity ? arrive : t);
+            if (!fired.has(k)) continue;
+            // the ink lands at once (full splash in its first frame), then the die dims under it
+            const since = t === Infinity ? 1e9 : t - firedAt[k];
+            const w = Math.min(1, since / 90);
+            lose.splashA = 1;
+            lose.scale = 1 + 0.06 * Math.sin(Math.min(1, since / 110) * Math.PI);
             lose.bright = 1 - 0.5 * ease.outCubic(w);
-            lose.splashA = Math.min(1, w * 1.8);
-            win.lift = 3 * ease.outCubic(Math.min(1, raw));
+            win.lift = 3 * ease.outCubic(Math.min(1, since / 120));
           }
           upd();
         },
       });
-      for (let k = 0; k < pairs; k++) fire(k);
+      for (let k = 0; k < pairs; k++) fire(k, ms);
+      for (const d of all) d.scale = 1;
+      upd();
     };
 
     // Static / instant: final faces, verdict applied at once.
@@ -866,9 +903,9 @@ export class DiceTray {
         },
       });
       spec.onLand?.(-1, 0);
-      if (spec.mode !== 'middle' && spec.mode !== 'first') spec.onSilence?.(this.anim.scale(VERDICT_SILENCE_MS));
-      await this.anim.wait(spec.mode === 'middle' ? 0 : spec.mode === 'first' ? 150 : VERDICT_SILENCE_MS + 100, run);
-      await verdict(spec.mode !== 'middle' && spec.mode !== 'first', spec.mode === 'middle' ? 80 : 260);
+      await this.anim.wait(spec.mode === 'middle' ? 0 : spec.mode === 'first' ? 150 : FIGHT.HANG + 60, run);
+      const fullV = spec.mode !== 'middle' && spec.mode !== 'first';
+      await verdict(fullV, spec.mode === 'middle' ? 80 : fullV ? verdictMs(pairs, !!spec.decisive) : 260);
       return;
     }
 
@@ -878,6 +915,13 @@ export class DiceTray {
       // [fight v5] the drum: the attacker's dice touch down, then the defender's a beat later (two clicks per
       // roll), and as the middles shorten the drum quickens.
       const dur = spec.durMs ?? 300;
+      // [v6] a long blitz folds rolls into beats: a folded roll (0 ms) lands its losses on this frame, no hop, no click
+      if (dur <= 0) {
+        all.forEach((d) => (d.shown = d.value));
+        upd();
+        await verdict(false, 0);
+        return;
+      }
       const pop = Math.min(110, dur * 0.4);
       const beat = Math.min(40, pop * 0.3);
       const r0 = all.map((_, i) => 0.35 * (i % 2 ? 1 : -1));
@@ -925,39 +969,104 @@ export class DiceTray {
       return;
     }
 
-    // Timings (1×). Single roll 120 + 450 + 100 + 250 + 240 = 1160 ms (≤ 1.25 s with the silence). Since
-    // 2026-09-30 the tumble is 450 (was 380); a blitz's final roll gets
-    // the same tumble and settle so the decisive roll reads like a single roll (its middles absorb it).
+    // [v6] A blitz's final roll: the dice are already in the tray (the middles left them there). They hop hard onto
+    // their last faces (the attacker's first, the defender's last die hanging a breath while the room hushes), and
+    // the full pair-by-pair verdict follows. No re-pour from an empty tray: a climax, not a restart.
+    if (spec.mode === 'final' && hadDice) {
+      const hop = FIGHT.BLITZ_FINAL_HOP;
+      const n = all.length;
+      const lastLand = hop + FIGHT.HANG - FIGHT.SQUASH;
+      const landAt = all.map((_, j) => (j === n - 1 ? lastLand : Math.max(60, lastLand - FIGHT.HANG - (n - 1 - j) * 40)));
+      const r0 = all.map((_, i) => 0.5 * (i % 2 ? 1 : -1));
+      const landed = new Set<number>();
+      let hushed = false;
+      const total = hop + FIGHT.HANG;
+      const stepF = (tms: number) => {
+          if (!hushed && tms >= lastLand - FIGHT.HUSH_LEAD) {
+            hushed = true;
+            spec.onSilence?.(this.anim.scale(FIGHT.HUSH_LEAD - 10));
+          }
+          all.forEach((d, j) => {
+            const u = Math.min(1, tms / landAt[j]);
+            if (u < 1) {
+              const e = ease.outCubic(u);
+              d.shown = e > 0.8 ? d.value : 1 + Math.floor(h01(j, Math.floor(e * 4), d.value + 5) * 6);
+              d.rot = r0[j] * Math.sin(u * Math.PI);
+              d.pos.z = Math.sin(u * Math.PI) * s * (j === n - 1 ? 0.42 : 0.3);
+              d.sx = 0.75 + 0.25 * Math.abs(Math.cos(e * Math.PI * 2));
+              d.sy = 1;
+              return;
+            }
+            if (!landed.has(j)) {
+              landed.add(j);
+              spec.onLand?.(d.side, d.side < 0 ? atk.indexOf(d) : def.indexOf(d));
+            }
+            const v = Math.min(1, (tms - landAt[j]) / FIGHT.SQUASH);
+            const q = v < 1 ? Math.sin(v * Math.PI) * (1 - 0.3 * v) : 0;
+            d.shown = d.value;
+            d.rot = 0;
+            d.pos.z = 0;
+            // it lands hard: a deeper squash than the pour's
+            d.sx = 1 + 0.17 * q;
+            d.sy = 1 - 0.19 * q;
+          });
+          upd();
+      };
+      // the verdict starts VERDICT_LEAD after the last click; the last squash plays out under it
+      const cut = Math.min(total, lastLand + VERDICT_LEAD);
+      await this.anim.tween({ ms: cut, ease: ease.linear, run, update: (_v, raw) => stepF(raw >= 1 && cut >= total ? total + 1 : raw * cut) });
+      if (cut < total && !(run && run.skipped)) {
+        const rest = total + 1 - cut;
+        void this.anim.tween({ ms: rest, ease: ease.linear, run, update: (_v, raw) => stepF(cut + raw * rest) });
+      }
+      const settleF = () => all.forEach((d, j) => {
+        if (!landed.has(j)) spec.onLand?.(d.side, d.side < 0 ? atk.indexOf(d) : def.indexOf(d));
+        d.shown = d.value;
+        d.rot = 0;
+        d.pos.z = 0;
+        d.sx = d.sy = 1;
+      });
+      await verdict(true, verdictMs(pairs, !!spec.decisive));
+      settleF();
+      upd();
+      return;
+    }
+
+    // Timings (1×, anim.ts FIGHT). Single roll 120 shake + 450 tumble + 80 hang + 100 settle, the verdict starting 30 ms
+    // after the last click (inside its squash): 2 pairs 120 + 160 + 60 = 340 (decisive 160 + 200 + 40 = 400).
+    // ≈ 1.03–1.09 s nominal, measured ~1.07 s in-page, under the 1.25 s budget.
+    // The first roll of a blitz keeps its quick pour and its all-at-once verdict.
     const T =
       spec.mode === 'single'
-        ? { shake: 120, tumble: DICE_TUMBLE_MS, settle: DICE_SETTLE_MS, silence: VERDICT_SILENCE_MS, verdict: VERDICT_MS, full: true }
-        : spec.mode === 'repeat'
-          ? { shake: 0, tumble: DICE_TUMBLE_MS, settle: DICE_SETTLE_MS, silence: VERDICT_SILENCE_MS, verdict: VERDICT_MS, full: true }
-          : spec.mode === 'first'
-            ? { shake: 80, tumble: 320, settle: 60, silence: 0, verdict: 200, full: false }
-            : { shake: 0, tumble: DICE_TUMBLE_MS, settle: DICE_SETTLE_MS, silence: VERDICT_SILENCE_MS, verdict: 220, full: true }; // final
+        ? { shake: FIGHT.SHAKE, tumble: DICE_TUMBLE_MS, hang: FIGHT.HANG, settle: DICE_SETTLE_MS, full: true }
+        : spec.mode === 'first'
+          ? { shake: 80, tumble: 320, hang: 0, settle: 60, full: false }
+          : { shake: 0, tumble: DICE_TUMBLE_MS, hang: FIGHT.HANG, settle: DICE_SETTLE_MS, full: true }; // repeat, final from empty
 
-    // [fight v5] The pour (PROPOSAL §4 A "action"). The roll's own window (shake + tumble + settle: 670 ms for a
-    // single roll) is unchanged; inside it the dice leave the cup's side one at a time, pairs interleaved
-    // (a0, d0, a1, d1, a2) so a matched pair lands together, each on a short arc down into the ring: it turns
-    // flat (1¼–2 turns easing out), its face flicks over 3–4 times, and it touches down with its own squash (and
-    // its own bone click, onLand). The last die's squash ends as the window does; the held breath follows.
-    const pre = T.shake + T.tumble + T.settle;
+    // [fight v5] The pour (PROPOSAL §4 A "action"): the dice leave the cup's side one at a time, pairs interleaved
+    // (a0, d0, a1, d1, a2) so a matched pair lands together, each on a short arc down into the ring: it turns flat
+    // (1¼–2 turns easing out), its face flicks over 3–4 times, and it touches down with its own squash (and its own
+    // bone click, onLand). [v6] The last die hangs a breath longer in the air (T.hang), and the hush starts
+    // HUSH_LEAD before it lands, so the room goes quiet as you wait for it, and its click ends the silence.
+    const pre = T.shake + T.tumble + T.hang + T.settle;
     const order: Die[] = [];
     for (let k = 0; k < Math.max(atk.length, def.length); k++) {
       if (atk[k]) order.push(atk[k]);
       if (def[k]) order.push(def[k]);
     }
     const n = order.length;
-    const SQ = spec.mode === 'first' ? 60 : 90;
+    const SQ = spec.mode === 'first' ? 60 : FIGHT.SQUASH;
     const lastLand = pre - SQ;
+    const prevLand = lastLand - T.hang;
     // a die needs ≥ 160 ms in the air and leaves ≥ 30 ms in (the ring is still brushing on)
-    const maxSt = n > 1 ? Math.max(0, (lastLand - 30 - 160) / (n - 1)) : 0;
+    const maxSt = n > 1 ? Math.max(0, (prevLand - 30 - 160) / (n - 1)) : 0;
     const st = Math.max(0, Math.min(90, spec.stagger ?? 0, maxSt));
-    const firstLand = lastLand - st * (n - 1);
+    const firstLand = prevLand - st * (n - 1);
     const F = Math.max(120, Math.min(380, firstLand - 30));
-    const land = order.map((_, j) => firstLand + j * st);
-    const dep = land.map((t) => t - F);
+    const land = order.map((_, j) => (j === n - 1 ? lastLand : firstLand + j * st));
+    // the last die leaves with the others' rhythm but stays up T.hang longer (a slower, higher arc)
+    const dep = order.map((_, j) => firstLand + j * st - F);
+    const flight = order.map((_, j) => land[j] - dep[j]);
     const sideIdx = order.map((d) => (d.side < 0 ? atk.indexOf(d) : def.indexOf(d)));
     // from each side's own end of the ring (the attacker's cup side, the defender's): just inside the rim,
     // raised off the paper, so the arc stays inside the ring and never crosses the header above it
@@ -967,22 +1076,29 @@ export class DiceTray {
     const flips = order.map((_, j) => 3 + (j % 2));
     const finals = order.map((d) => d.pos.clone());
     const landed = new Set<number>();
+    let hushed = !T.full;
     order.forEach((d) => (d.alpha = 0));
     upd();
     if (T.shake > 0) spec.onShake?.(this.anim.scale(T.shake));
     const step = (tms: number) => {
+      if (!hushed && tms >= lastLand - FIGHT.HUSH_LEAD) {
+        hushed = true;
+        // the score dips and nothing new sounds until a hair before the last die's click
+        spec.onSilence?.(this.anim.scale(FIGHT.HUSH_LEAD - 10));
+      }
       order.forEach((d, j) => {
         if (tms < dep[j]) {
           d.alpha = 0;
           return;
         }
         if (tms < land[j]) {
-          const u = Math.min(1, (tms - dep[j]) / F);
+          const u = Math.min(1, (tms - dep[j]) / flight[j]);
           const e = ease.outCubic(u);
+          const hang = j === n - 1 && T.hang > 0 ? 1.25 : 1;
           d.pos.x = starts[j].x + (finals[j].x - starts[j].x) * ease.outQuad(u);
           d.pos.y = starts[j].y + (finals[j].y - starts[j].y) * e;
-          // the arc: tossed up a little, then it falls (gravity) onto its spot
-          d.pos.z = starts[j].z * (1 - ease.inQuad(u)) + Math.sin(u * Math.PI) * s * 0.45 * (1 - 0.5 * u);
+          // the arc: tossed up a little, then it falls (gravity) onto its spot (the last die: higher, it hangs)
+          d.pos.z = starts[j].z * (1 - ease.inQuad(u)) + Math.sin(u * Math.PI) * s * 0.45 * hang * (1 - 0.5 * u);
           d.rot = (1 - e) * turns[j];
           const ph = Math.min(1, e / 0.85) * flips[j];
           const k = Math.floor(ph);
@@ -1009,23 +1125,29 @@ export class DiceTray {
       });
       upd();
     };
-    await this.anim.tween({ ms: pre, ease: ease.linear, run, update: (_v, raw) => step(raw >= 1 ? pre + SQ : raw * pre) });
-    order.forEach((d, j) => {
-      if (!landed.has(j)) spec.onLand?.(d.side, sideIdx[j]);
-      d.pos.copy(finals[j]);
-      d.pos.z = 0;
-      d.rot = 0;
-      d.shown = d.value;
-      d.sx = d.sy = 1;
-      d.alpha = 1;
-    });
-    upd();
-    // The held breath: nothing moves, nothing sounds.
-    if (T.silence) {
-      spec.onSilence?.(this.anim.scale(T.silence));
-      await this.anim.wait(T.silence, run);
-    }
-    await verdict(T.full, T.verdict);
+    // [v6] the verdict doesn't wait for the last die's squash to finish: its first hairline starts VERDICT_LEAD after
+    // the last click (so it lands ≤ 150 ms after it), and the squash plays out underneath.
+    const cut = T.full ? Math.min(pre, lastLand + VERDICT_LEAD) : pre;
+    await this.anim.tween({ ms: cut, ease: ease.linear, run, update: (_v, raw) => step(raw >= 1 && cut >= pre ? pre + SQ : raw * cut) });
+    const settle = () => {
+      order.forEach((d, j) => {
+        if (!landed.has(j)) spec.onLand?.(d.side, sideIdx[j]);
+        d.pos.copy(finals[j]);
+        d.pos.z = 0;
+        d.rot = 0;
+        d.shown = d.value;
+        d.sx = d.sy = 1;
+        d.alpha = 1;
+      });
+      upd();
+    };
+    if (cut < pre && !(run && run.skipped)) {
+      const rest = pre + SQ - cut;
+      void this.anim.tween({ ms: rest, ease: ease.linear, run, update: (_v, raw) => (raw >= 1 ? settle() : step(cut + raw * rest)) });
+    } else settle();
+    // [v6] no held stillness here any more: the verdict follows the settle at once (the hush came before it)
+    await verdict(T.full, T.full ? verdictMs(pairs, !!spec.decisive) : 200);
+    settle();
   }
 
   private proj = new THREE.Vector3();

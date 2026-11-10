@@ -301,6 +301,30 @@ export interface BoardView {
   onLaneGlint?(cb: (from: TerritoryId, to: TerritoryId) => void): void;
 
   /**
+   * Additive (v6 feel, _claude/v6/audit/feel.md row 3): an invalid tap answers on the board. A ~120 ms ink shiver
+   * on that territory (its coast flickers, a dark flick over its wash). Call it beside the uiError tick.
+   */
+  shiver?(territory: TerritoryId): void;
+  /**
+   * Additive (v6 feel, row 23): an AI is about to act from `territory`. A short glint on its coast (≈ 150 ms up,
+   * 300 ms down), never waited on. Call it ~150 ms before the AI's stroke (inside the gap between engagements).
+   */
+  glintSource?(territory: TerritoryId): void;
+  /**
+   * Additive (v6 feel, mobile finding 3): portrait phones' whole-world overview. true = home becomes the view
+   * that fits every territory and the camera eases there; false = back to the portrait fill (the current
+   * player's front). No-op outside the portrait fill layout. A double-tap on open water toggles it too.
+   */
+  setOverview?(on: boolean): void;
+  isOverview?(): boolean;
+  /** Additive (v6 feel): called when the overview turns on or off (by setOverview or the double-tap). */
+  onOverviewChange?(cb: (on: boolean) => void): void;
+  /**
+   * Additive (v6 feel, row 20): duck every sounding effect over `ms` (default 120) and dip the score, instead of
+   * the hard `stopAll` cut (the knockout). Forwards to `audio.duck` when the board has the audio engine.
+   */
+  duckAudio?(ms?: number): void;
+  /**
    * Screen position (client px) of a territory's army piece — the top centre of its base, which is always
    * on the territory's own tile (click it to select) — or null if off-screen.
    */

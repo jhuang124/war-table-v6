@@ -11,7 +11,7 @@ import { createController, type GameController } from '../../src/game/controller
 import { attackBegins, attackTakes, attackThrownBack, goesFirst, movesIn } from '../../src/game/copy';
 import { buildReceipt, emptyReceipts, noteTurnStart, recordReceipt, RECEIPT_LINE_MAX } from '../../src/game/recap';
 import { memoryKV, SAVE_KEY, SETTINGS_KEY, type KV } from '../../src/game/storage';
-import { EVENT_TIERS, TIER_BANDS, eventDurationMs, eventTier, scaledDuration } from '../../src/game/timingModel';
+import { EVENT_TIERS, SINGLE_ROLL_MS, TIER_BANDS, eventDurationMs, eventTier, scaledDuration } from '../../src/game/timingModel';
 import { board as fixture } from './fixtures';
 
 interface Played {
@@ -167,7 +167,7 @@ describe('E5 tiers (timingModel)', () => {
     expect(inBand(eventDurationMs(fort, { tier: 1 }), 1)).toBe(true);
     const roll = { type: 'diceRolled', player: 1, defender: 0, from: 'ural', to: 'siberia', attackDice: [6, 5, 1], defendDice: [3, 2], attackerLosses: 0, defenderLosses: 2, blitz: true } as GameEvent;
     // The dice show (a human's full roll) is theatre: never squeezed into tier 1.
-    expect(eventDurationMs(roll, { style: 'full', tier: 1 })).toBe(1200);
+    expect(eventDurationMs(roll, { style: 'full', tier: 1 })).toBe(SINGLE_ROLL_MS);
     // Readable: one tier-1 beat for the whole engagement, however many rolls.
     expect(inBand(eventDurationMs(roll, { style: 'readable', tier: 1, seq: { index: 0, count: 4 } }), 1)).toBe(true);
     expect(eventDurationMs(roll, { style: 'readable', tier: 1, seq: { index: 2, count: 4 } })).toBe(0);

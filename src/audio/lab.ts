@@ -24,7 +24,7 @@ const MATERIAL: Record<SfxName, 'paper' | 'brush' | 'wood' | 'bone' | 'bowl'> = 
   whoosh: 'brush', place: 'brush', unplace: 'brush', march: 'brush', hit: 'brush', conquer: 'brush',
   diceShake: 'wood', diceLand: 'bone', continent: 'bowl', eliminated: 'bowl', victory: 'bowl',
   sheet: 'paper', tick: 'paper', cupSlide: 'wood', cupSet: 'wood', bone: 'bone',
-  ripple: 'paper', glint: 'paper', splash: 'brush', pour: 'brush', rattle: 'wood',
+  ripple: 'paper', glint: 'paper', splash: 'brush', pour: 'brush', rattle: 'wood', land: 'wood',
 };
 
 // ---------------------------------------------------------------------------

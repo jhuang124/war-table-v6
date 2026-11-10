@@ -11,7 +11,7 @@
 import { clamp } from './dsp';
 import { LOOKAHEAD, Mixer } from './mixer';
 import { SFX } from './sounds';
-import { V4_CUES, V5_CUES, type AudioEngine, type AudioStats, type CreateAudioOptions, type PlayOptions, type SfxName, type StrokeHandle, type V4Cue, type V5Cue } from './types';
+import { V4_CUES, V5_CUES, V6_CUES, type AudioEngine, type AudioStats, type CreateAudioOptions, type PlayOptions, type SfxName, type StrokeHandle, type V4Cue, type V5Cue, type V6Cue } from './types';
 
 type AudioContextCtor = new (opts?: AudioContextOptions) => AudioContext;
 
@@ -142,9 +142,9 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
   return {
     unlock,
     play,
-    cue(name: V4Cue | V5Cue, o?: PlayOptions) {
+    cue(name: V4Cue | V5Cue | V6Cue, o?: PlayOptions) {
       // tolerant: unknown names are a silent no-op
-      if (!(V4_CUES.includes(name as V4Cue) || V5_CUES.includes(name as V5Cue)) || !SFX[name as SfxName]) return;
+      if (!(V4_CUES.includes(name as V4Cue) || V5_CUES.includes(name as V5Cue) || V6_CUES.includes(name as V6Cue)) || !SFX[name as SfxName]) return;
       play(name as SfxName, o);
     },
     fightCold(on: boolean) {
@@ -251,6 +251,15 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
       } catch (err) {
         console.warn('[audio] stroke failed', err);
         return null;
+      }
+    },
+    duck(ms?: number) {
+      try {
+        if (!ctx || !mixer || ctx.state !== 'running') return;
+        const sec = Number.isFinite(ms) ? clamp((ms as number) / 1000, 0.03, 1) : 0.12;
+        mixer.duckAll(ctx.currentTime + LOOKAHEAD, sec);
+      } catch {
+        /* never throw */
       }
     },
     stopAll() {
