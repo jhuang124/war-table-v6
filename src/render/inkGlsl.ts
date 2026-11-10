@@ -77,6 +77,8 @@ export interface SharedUniforms {
   [k: string]: THREE.IUniform;
   uInk: { value: THREE.Texture };
   uField: { value: THREE.Texture };
+  /** v6: distance to playable land (ink.ts landDist), for the decorative land's fade. */
+  uLandD: { value: THREE.Texture };
   uNoise: { value: THREE.Texture };
   uTerr: { value: THREE.DataTexture };
   uBoard: { value: THREE.Vector2 };
@@ -117,6 +119,10 @@ export interface SharedUniforms {
   uContW: { value: number };
   /** Continent sweep: (centre bx, centre by, progress 0..1 clockwise from north, amount 0..1). */
   uContSweep: { value: THREE.Vector4[] };
+  /** v6: the outline's extra weight while a take re-inks it (0 at rest; continents.ts sweep). */
+  uContBoost: { value: number[] };
+  /** v6: a broken hold drains from the broken territory: (origin bx, by, radius, on). */
+  uContDrain: { value: THREE.Vector4[] };
   // --- the pigment maps (docs/INK2.md §4.2), driven by the ink layer's texture ladder -------------------
   /** Paper: R fibre · G mottle · B grain · A flecks (mask). A neutral grey texel until the map loads. */
   uPaperTex: { value: THREE.Texture };
@@ -171,6 +177,7 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
   const u: SharedUniforms = {
     uInk: { value: ink.ink },
     uField: { value: ink.field },
+    uLandD: { value: ink.landDist },
     uNoise: { value: ink.noise },
     uTerr: { value: makeTerrTexture(ink) },
     uBoard: { value: new THREE.Vector2(boardW, boardH) },
@@ -198,6 +205,8 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
     uContTint: { value: CONT_TINTS.map((h) => v3(h)) },
     uContW: { value: 0.11 },
     uContSweep: { value: Array.from({ length: CONT_SLOTS }, () => new THREE.Vector4(0, 0, 0, 0)) },
+    uContBoost: { value: Array.from({ length: CONT_SLOTS }, () => 0) },
+    uContDrain: { value: Array.from({ length: CONT_SLOTS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     uPaperTex: { value: neutralTexture() },
     uWashTex: { value: neutralTexture() },
     uTexOn: { value: 0 },
@@ -215,6 +224,7 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
 export const INK_GLSL = /* glsl */ `
 uniform sampler2D uInk;
 uniform sampler2D uField;
+uniform sampler2D uLandD;
 uniform sampler2D uNoise;
 uniform sampler2D uTerr;
 uniform vec2 uBoard;
@@ -238,6 +248,8 @@ uniform vec2 uLiftB;
 uniform float uBreath;
 uniform vec3 uContColor[${CONT_SLOTS}];
 uniform vec4 uContSweep[${CONT_SLOTS}];
+uniform float uContBoost[${CONT_SLOTS}];
+uniform vec4 uContDrain[${CONT_SLOTS}];
 uniform sampler2D uCont;
 uniform vec3 uContLine;
 uniform vec3 uContTint[${CONT_SLOTS}];
@@ -467,24 +479,34 @@ vec3 continentInk(vec3 c, vec2 bp, float sea) {
     c = max(c + ((t - vec3(lt)) * 0.2 + 0.012) * sea, vec3(0.0));
   }
   float d = k.r * CONT_DR;
+  // (v6: the field is a true distance to a smooth curve now, so the line's own pixel is its anti-alias)
   float aa = max(fwidth(d), 1e-4);
-  // a crisp printed line, lightly feathered like the coasts (the pen swells a little here and there)
-  float w = uContW * (1.0 + 0.22 * (nz(bp / 4.3 + 0.17).g - 0.5));
-  float a = 1.0 - smoothstep(w - 0.45 * aa, w + 0.45 * aa, d);
+  int li = int(kn.b * 255.0 + 0.5);
+  float boost = li < ${CONT_SLOTS} ? uContBoost[li] : 0.0;
+  // a crisp printed line, lightly feathered like the coasts (the pen swells a little here and there); a take
+  // re-inks it heavier for a moment
+  float w = uContW * (1.0 + 0.22 * (nz(bp / 4.3 + 0.17).g - 0.5)) * (1.0 + boost);
+  float a = 1.0 - smoothstep(w - 0.6 * aa, w + 0.6 * aa, d);
   if (a < 0.002) return c;
   // the pen's pressure: the line is solid, a hair drier here and there (the one brush, E2)
   a *= brushJit(bp);
-  int li = int(kn.b * 255.0 + 0.5);
   vec3 lc = uContLine;
+  // v6: the silver line at rest is a quarter lighter (it sat over the coasts it frames, audit F2); a held one
+  // keeps its weight
+  float rest = 0.75;
   if (li < ${CONT_SLOTS}) {
     vec4 sw = uContSweep[li];
     if (sw.w > 0.001) {
       vec2 dd = bp - sw.xy;
       float ang = fract(atan(dd.x, dd.y) / 6.2831853 + 1.0);
       float m = sw.z >= 0.999 ? 1.0 : 1.0 - smoothstep(sw.z - 0.035, sw.z, ang);
+      vec4 dn = uContDrain[li];
+      if (dn.w > 0.5) m *= smoothstep(dn.z - 0.9, dn.z, length(bp - dn.xy));
       lc = mix(lc, uContColor[li], sw.w * m);
+      rest = mix(rest, 1.0, sw.w * m);
     }
   }
+  a *= min(1.0, rest + boost);
   return mix(c, lc, a);
 }
 
@@ -526,8 +548,10 @@ void main() {
     vec4 f = fieldAt(bp);
     seaD = f.g * 4.0;
     float id = idAt(bp);
-    // decorative (non-playable) land: raw paper, a shade lighter
-    if (f.a > 0.5 && id < 0.5) c = mix(c, uUnclaimed, 0.55);
+    // decorative (non-playable) land: raw paper, a shade lighter, near the board's own land; farther inland it
+    // dissolves into the paper (v6: no flat grey slabs out to the board's edge, audit F3)
+    float decorFade = 1.0 - smoothstep(1.4, 4.8, texture2D(uLandD, bUV(bp)).r * 6.0);
+    if (f.a > 0.5 && id < 0.5) c = mix(c, uUnclaimed, 0.55 * decorFade);
     // the coast glow: the heavy stroke's own bloom bleeding into the sea, drifting slowly (E2: one brush)
     float cj = coastJit(bp);
     c = mix(c, uInkCoast, COAST_BLOOM * (0.6 + 0.4 * cj) * smoothstep(0.03, 0.55, coastSoft(bp)) * (1.0 - f.a));
@@ -536,7 +560,7 @@ void main() {
     vec3 cc = coastColor(id, bp, glow);
     float jit = brushJit(bp);
     // the decorative coasts: the Hair weight, Layer 3
-    c = mix(c, uInkCoast * 0.96, k.b * 0.4 * jit);
+    c = mix(c, uInkCoast * 0.96, k.b * 0.4 * jit * mix(0.25, 1.0, decorFade));
     // the coast: the Heavy weight, Layer 2 (30–60 % against its paper), full ivory only when it glows
     c = mix(c, cc, clamp(k.r * mix(cj, 1.0, glow) * (COAST_A + (1.0 - COAST_A) * glow), 0.0, 1.0));
     // the tint: a thin shore band only (~0.3 units out); water the outline encloses stays paper

@@ -193,6 +193,12 @@ export interface BoardView {
    */
   setReducedMotion?(on: boolean): void;
   /**
+   * Additive (v6 board, capitals): each capital's territory and the seat whose capital it is (its first holder).
+   * The stone there wears a second brushed rim in that seat's pigment for the rest of the game, whoever holds
+   * it now. Call it when the capitals are dealt and on a load; null or {} clears them. Never called = none drawn.
+   */
+  setCapitals?(capitals: Partial<Record<TerritoryId, PlayerId>> | null): void;
+  /**
    * Additive (renderer builder): hand the board the audio engine so motion-bound SFX land on their
    * contact frames. When set, the BOARD plays: place, unplace, diceShake, diceLand, hit, conquer,
    * march, whoosh (and calls audio.stopAll() inside skipAnimations). The controller must NOT play

@@ -343,9 +343,11 @@ export const recipe: MapRecipe = {
     britannia: [2.5, 54.5],
     gallia: [-5.0, 46.5],
     hispania: [-10.5, 40.0],
-    italia: [11.5, 40.2],
-    illyricum: [30.6, 44.4],
-    graecia_asia: [35.5, 42.6],
+    // v6-board: the Tyrrhenian's middle, the Ionian, and the open middle of the Black Sea (the old spots sat on
+    // the Black Sea's coasts and over Sicily's crossing)
+    italia: [11.6, 39.4],
+    illyricum: [18.8, 37.4],
+    graecia_asia: [33.6, 43.4],
     oriens: [31.5, 33.6],
     africa: [6.0, 37.8],
   },
