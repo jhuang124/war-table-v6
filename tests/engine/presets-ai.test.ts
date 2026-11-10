@@ -23,7 +23,7 @@ describe('presets: neutral seat and personalities', () => {
   });
 
   it('2 players with the neutral seat use the 3-player thresholds and their own length row', () => {
-    expect(lengthRules('quick', 2, true)).toEqual({ dominationPercent: 60, turnLimit: 12 });
+    expect(lengthRules('quick', 2, true)).toEqual({ dominationPercent: 60, turnLimit: 8 });
     expect(lengthRules('evening', 2, true)).toEqual({ dominationPercent: 70, turnLimit: null });
     const d = twoSeats();
     (d.house as { neutral?: boolean }).neutral = true;

@@ -66,7 +66,8 @@ resolves, so nothing spoils the dice.
 
 **Setup**
 - Starting armies: 2p 40, 3p 35, 4p 30 (`STARTING_ARMIES`, overridable).
-- First player: chosen by the seeded RNG. Emit `gameStarted`.
+- First player: chosen by the seeded RNG. Emit `gameStarted`. v6: among the human seats when there is one
+  (`config.firstPlayer` pins it); see §11.9.
 - `setupMode: 'random'`: shuffle the 42 territories, deal round-robin starting at the first player,
   1 army each (`territoriesDealt`). `'draft'`: phase `setup-claim`; players take turns claiming one
   unclaimed territory (1 army) until all 42 are claimed.
@@ -95,6 +96,8 @@ resolves, so nothing spoils the dice.
 
 **Turn: attack**
 - From an owned territory with ≥2 armies to an adjacent enemy territory.
+- v6 quiet opening: in a 2-player game (no neutral seat) the first player's opening turn has no attacks
+  (`OPENING_NO_ATTACK`); see §11.9.
 - Attacker rolls 1–3 dice (≤ armies − 1). Defender always rolls the max it can (1 or 2, ≤ its armies).
 - Sort both high → low, compare pairwise over `min(a, d)` pairs; ties go to the defender. Emit `diceRolled`.
 - `blitz`: repeat max-dice attacks until the territory falls or the attacker is down to `stopAt`
@@ -917,3 +920,66 @@ Source: `_claude/v5/QUIETER.md` §3 C ("Decide, don't ask"). Code: `src/engine/s
   across all pairs ≈ 75 per 4p game (≈ 5 a round), so the controller lines only the ones toward the reader. Against
   v5: the personality free-for-all runs 16.6 rounds (was 15.6); missions-off Evening 4p 10 / 18 (was 9 / 14), 3p
   8 / 15 (7 / 14); the classic tables are unchanged. The soak fails if no understanding ever forms.
+
+### 11.9 v6 rules (engine lane; all fields optional, old saves load unchanged, `GameState.version` stays 1)
+Measured with `scripts/v6/*.ts` (child-process sims on the audit harness; logs in `artifacts/v6-engine/`, not
+committed). "Default table" = seat 0 a person (proxy: the classic Normal AI) who moves first, the other seats Normal
+AIs with random personalities, standing on, quick deal.
+- **Quiet opening** (`config.quietOpening?`; unset = on for exactly 2 players without the neutral seat). The first
+  player's opening turn (`state.turn === 1`) is place and fortify only: attack/blitz is refused with
+  `OPENING_NO_ATTACK` ('No attacks on the opening turn.'), `legalActionsSummary` sets `attacksLocked: true` with
+  empty `attackSources`, `attacksLocked(state)` / `quietOpeningOn(config)` say so, the AI ends the step.
+  2p first mover, n=1000 each (exp-opening): classic AIs 75.9% → **48.2%**; default table 78.1% → 47.1%; place
+  your own 76.4% → 40.5% (classic) / 77.9% → 43.4% (default); with the neutral seat 57.6% → 56.2%, so it stays off
+  there. 2p median rounds +1 (5 → 6–7).
+- **A person moves first.** One rng draw either way: among the human seats when there is one, among every seat
+  otherwise (all-AI games deal exactly as before); `config.firstPlayer?` pins it (the draw is still taken). Seat 0 on
+  the default table, n=1000 (exp-humanfirst): 3p 35.4% rotating → 32.2% moving first; 4p 22.9% → 20.1% (the first
+  seat is slightly behind at 3–4 seats; the audit's default-table first mover was 34.2% / 21.5%).
+- **Handicap** (`PlayerConfig.handicap?`, 0..10): extra armies at the start of each of that seat's turns, in
+  `reinforcementsFor` (`ReinforcementBreakdown.handicap?`, included in `total`). Difficulty (presets
+  `DIFFICULTY_HANDICAP`, `DIFFICULTY_LABELS`): Easy = the easy AI, Normal = the normal AI, **Hard = the hard AI
+  +1 army a turn**. One AI among three Normal AIs, personalities at random, Evening, n=1000 (exp-difficulty):
+  Easy 6.2%, Normal 27.7%, Hard alone 34.7%, Hard +1 **43.9%**, Hard +2 55.1% (fair 25%).
+- **Personalities** (`TEMPERAMENTS` gains `settleBar`, `gambleOdds`, `focus`; `personaFor` retuned). Turtle: once
+  its card is in hand it attacks only inside the continents it is building (or for a score ≥ 5); in a duel it
+  fights on. Warlord: attack bar 0.5, takes near-even fights (blitz odds ≥ 0.4) against the seat it presses (its
+  grudge, a hostile seat or the leader) and 2-v-1 card grabs; lookahead 3, timed trades. Opportunist: +1 target
+  value on the weakest seat and on a seat someone else hit this round, −1 on the rest. Mixed 4-seat all-AI tables,
+  Normal, n=1000 games (exp-persona), before → after:
+  | | fights/turn | rounds 1–2 | mean odds | near-even (< 0.65) | on leader | on weakest | top stack share | win rate |
+  |---|---|---|---|---|---|---|---|---|
+  | Turtle | 4.86 → 3.38 | 5.22 → 2.49 | 0.92 → 0.96 | 0.0 → 0.4% | 52 → 65% | 35 → 43% | 0.20 → 0.32 | 27.9 → 19.7% |
+  | Opportunist | 4.93 → 5.26 | 5.72 → 5.77 | 0.91 → 0.92 | 0.0 → 0.8% | 48 → 49% | 40 → 56% | 0.20 → 0.23 | 26.3 → 31.3% |
+  | Warlord | 5.00 → 5.89 | 6.18 → 7.71 | 0.90 → 0.83 | 1.0 → 17.7% | 49 → 48% | 39 → 49% | 0.19 → 0.21 | 20.8 → 23.9% |
+  Against the classic Normal AI in 2p (n=1000): Turtle 37.8%, Opportunist 45.7%, Warlord 65.0%.
+- **The end, seen coming** (`threatOf(state)` / `threatFor(state, seat)` in `src/engine/threat.ts` →
+  `{ player, need, set, canWinNext }`): territories still needed for the territory goal, the armies of the best set
+  in hand (null without one), and a greedy estimate: next turn's income + that set + its biggest border stack's
+  spare armies, spent on reachable enemy territory at 3 × defenders + 1 each, covers `need`. The AI
+  (`Persona.stopWeight`: normal 3, hard 4, easy 0) adds that to a seat that can win next turn and halves every
+  other seat's value. Default table, Evening, n=1000 (exp-threat), response off → on: a flagged seat wins on its
+  very next turn 22.2 → 18.2% of flags (3p), 16.4 → 14.2% (4p), 45.7 → 45.4% (2p); games won on the turn right
+  after a flag 85.7 → 84.6% / 86.4 → 83.3%; a flag appears in 92–95% of games, median 3 rounds before the end;
+  median rounds 10 → 10 (3p), 12 → 13 (4p) (mean +0.8 / +0.7).
+- **Peace is scarce** (`PEACE_ONCE`): you may ask each AI for peace once a game, hold one peace at a time, and no AI
+  makes peace with someone who has more armies than it ('Sage refuses · you are stronger'). Still three rounds.
+  Seat 0 asking its biggest neighbour whenever allowed (audit exp10 policy), n=1000 (exp-peace): median rounds
+  3p 10 → 9, 4p 13 → 13 (was +5 / +6 in v5); accepted 51–57% (was 96–97%); seat 0 wins 32 → 53% (3p), 20 → 32% (4p).
+- **Capitals** (`config.capitals?: { bonus, holdAllWins? }`; presets `CAPITALS_RULE` = +1, on at 3–4 seats). Each
+  seat's capital (`PlayerState.capital?`) is set as play starts with no rng: its territory with the most own
+  neighbours, then most armies, then map order. It pays whoever holds it `bonus` a turn
+  (`ReinforcementBreakdown.capitals?`). Taking one sets `territoryConquered.capitalOf?` (whose capital it is).
+  `holdAllWins`: holding every capital wins (`gameOver.by: 'capitals'`, reason 'percent'). The AI defends its own
+  like a continent border and values others' (`capitalValue`). Gates vs off (default table, Evening, n=800 per row,
+  exp-capitals): **+1 income passes at 3 and 4 seats** (median 10 → 10 / 13 → 13; first mover 32.5 → 33.5% /
+  20.6 → 19.5%; round-5 leader 57.9 → 54.5% / 39.9 → 41.3%; 0–0.6% over before round 4) and fails at 2 seats
+  (first mover 47.6 → 55.1%). +2 fails (3p first mover 28.5%, round-5 leader +5.6; 4p first mover 16.1%).
+  "Holding every capital wins" fails everywhere (2p ends in round 1; 3p median 3 rounds, 53–58% over before round 4;
+  4p median 9). Capitals change hands often: 21 (3p) / 35 (4p) takings a game at +1.
+- **Presets** (`src/game/presets.ts`): Quick = 60% with an 8-round cap (2p keeps 75%), Evening 70% (2p 80%) and the
+  default, Full conquest advanced (`ADVANCED_LENGTHS`, `isAdvancedLength`). Time estimates read measured per-map
+  rounds (`ROUNDS_BY_MAP`, `scripts/v6/rounds.ts`, n=400 per row) instead of scaling classic's by board size. Draft
+  setup is no longer offered (`draftToConfig` always deals; the engine keeps `setupMode: 'draft'`).
+- **Soak** (`npm run sim 200`, 2026-11-10): PASS. Standing full-conquest rounds 4p 18 / 37 (was 15 / 25), 3p
+  13 / 23 (12 / 21), 2p+neutral 11 / 17 (unchanged).

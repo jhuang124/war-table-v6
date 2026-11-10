@@ -48,6 +48,13 @@ function table(personality: AiPersonality, opts: { lead?: boolean; current?: Pla
   return s;
 }
 
+/** v6: an AI seat agrees to peace only with someone no stronger; give `p` 10 more armies on an interior territory. */
+function armed(s: GameState, p: PlayerId): GameState {
+  const t: TerritoryId = p === ANN ? 'madagascar' : 'western_australia';
+  s.territories[t].armies += 10;
+  return s;
+}
+
 /** Ann lost `n` territories to Dan, the last one (Egypt) in round `round`. */
 function hurt(s: GameState, n: number, round = s.round - 1): GameState {
   s.round = Math.max(s.round, 2);
@@ -193,19 +200,17 @@ describe('canAskPeace and askPeace', () => {
     expect(peaceAskBlock(r.state, DAN, ANN)).toBe('Ann is already at peace with you · until round 5');
   });
 
-  it('ally agrees; hostile refuses with its reason; once per three rounds per seat', () => {
-    expect(act(table('turtle', { lead: true }), { type: 'askPeace', player: DAN, to: BEN }).events[0]).toMatchObject({ accepted: true });
+  it('ally agrees; hostile refuses with its reason; once a game per seat (v6)', () => {
+    expect(act(armed(table('turtle', { lead: true }), BEN), { type: 'askPeace', player: DAN, to: BEN }).events[0]).toMatchObject({ accepted: true });
     const s = hurt(table('warlord'), 2);
     const r = act(s, { type: 'askPeace', player: DAN, to: ANN });
     expect(r.events).toEqual([{ type: 'peaceAnswered', from: ANN, to: DAN, accepted: false, rounds: 3, reason: 'Ann refuses · you took Egypt' }]);
     expect(r.state.rng).toBe(s.rng); // no draw: hostile always refuses
     expect(canAskPeace(r.state, DAN, ANN)).toBe(false);
-    expect(peaceAskBlock(r.state, DAN, ANN)).toBe(`You asked Ann in round ${s.round} · ask again in round ${s.round + 3}`);
+    expect(peaceAskBlock(r.state, DAN, ANN)).toBe(`You asked Ann in round ${s.round} · once a game`);
     const later = cloneState(r.state);
-    later.round += 2;
+    later.round += 10;
     expect(canAskPeace(later, DAN, ANN)).toBe(false);
-    later.round += 1;
-    expect(canAskPeace(later, DAN, ANN)).toBe(true);
     // The leader is refused for leading.
     const lead = act(withRng(table('warlord', { lead: true }), 3), { type: 'askPeace', player: DAN, to: ANN });
     if (!(lead.events[0] as { accepted: boolean }).accepted) expect(lead.events[0]).toMatchObject({ reason: 'Ann refuses · you lead the table' });
@@ -213,7 +218,7 @@ describe('canAskPeace and askPeace', () => {
 
   it('wary agrees by personality: Turtle 0.7, Opportunist 0.4, Warlord 0.15 (state.rng)', () => {
     for (const [p, want] of [['turtle', 0.7], ['opportunist', 0.4], ['warlord', 0.15]] as [AiPersonality, number][]) {
-      const base = table(p, { lead: true });
+      const base = armed(table(p, { lead: true }), ANN);
       expect(standingOf(base, ANN, DAN)).toBe('wary');
       let yes = 0;
       const N = 600;
@@ -227,7 +232,7 @@ describe('canAskPeace and askPeace', () => {
   });
 
   it('the AI keeps the peace: no attack on the human even when it would be easy', () => {
-    let s = act(table('warlord', { lead: true }), { type: 'askPeace', player: DAN, to: BEN }).state;
+    let s = act(armed(table('warlord', { lead: true }), BEN), { type: 'askPeace', player: DAN, to: BEN }).state;
     s = cloneState(s);
     s.currentPlayer = BEN;
     s.phase = { kind: 'attack' };

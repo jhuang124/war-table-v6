@@ -5,7 +5,7 @@
 // (a wary AI weighing a peace request) uses state.rng in the reducer.
 
 import { brokenPeace, ensureDiplomacy, grudgeOf, isPeace, truceBetween } from './diplomacy';
-import { mapOf, territoryName } from './rules';
+import { mapOf, territoryName, totalArmies } from './rules';
 import type { AiPersonality, GameEvent, GameState, PlayerId, Truce } from './types';
 
 /** How an AI seat feels about another seat. Hardens from ally → even → wary → hostile. */
@@ -15,8 +15,17 @@ export const STANDINGS: readonly Standing[] = ['ally', 'even', 'wary', 'hostile'
 
 /** Peace lasts this many rounds after the round it is agreed in. */
 export const PEACE_ROUNDS = 3;
-/** A human may ask the same AI seat for peace once per this many rounds. */
+/**
+ * v5.1: a human could ask the same AI seat for peace once per this many rounds. v6: superseded by
+ * PEACE_ONCE (one ask per AI seat per game); kept for old imports.
+ */
 export const PEACE_ASK_ROUNDS = 3;
+/**
+ * v6 "peace is not free": a person may ask each AI seat for peace once a game, whatever the answer. Asking every
+ * AI whenever allowed stretched games by 5–6 rounds (audit exp10); once a game keeps it to about one
+ * (scripts/v6/exp-peace.ts, docs/SPEC.md §11.9).
+ */
+export const PEACE_ONCE = true;
 /** A wary AI agrees to peace with this probability (state.rng). Ally and even always agree; hostile never. */
 export const WARY_ACCEPT: Record<AiPersonality | 'classic', number> = { turtle: 0.7, opportunist: 0.4, warlord: 0.15, classic: 0.3 };
 
@@ -362,14 +371,21 @@ export function peaceAskBlock(s: GameState, human: PlayerId, ai: PlayerId): stri
   if (brokenPeace(s, human, ai)) return standingReason(s, ai, human);
   const t = truceBetween(s, human, ai);
   if (t) return `${a.name} is already at peace with you${SEP}until round ${t.until}`;
+  // v6: one peace at a time.
+  for (const p of s.players) {
+    if (p.id === ai || p.id === human) continue;
+    const other = truceBetween(s, human, p.id);
+    if (other && isPeace(s, other)) return `You are at peace with ${p.name}${SEP}one peace at a time`;
+  }
   const last = lastPeaceAsk(s, human, ai);
+  if (last !== null && PEACE_ONCE) return `You asked ${a.name} in round ${last}${SEP}once a game`;
   if (last !== null && s.round - last < PEACE_ASK_ROUNDS) return `You asked ${a.name} in round ${last}${SEP}ask again in round ${last + PEACE_ASK_ROUNDS}`;
   return null;
 }
 
 /**
- * True when `human` may ask `ai` for peace now: the human's main turn (reinforce, attack or fortify), once per
- * three rounds per AI seat, not while peace already holds with that seat, and never with a seat the human broke
+ * True when `human` may ask `ai` for peace now: the human's main turn (reinforce, attack or fortify), once a game
+ * per AI seat (v6; v5.1 was once per three rounds), not while peace already holds with that seat, and never with a seat the human broke
  * the peace with (it refuses forever; `standingReason` says why).
  */
 export function canAskPeace(s: GameState, human: PlayerId, ai: PlayerId): boolean {
@@ -388,11 +404,15 @@ export function peaceAnswer(
 ): { accepted: boolean; reason: string; standing: Standing } {
   const r = read(s, ai, human);
   const name = nameOf(s, ai);
+  // v6: nobody makes peace with someone stronger (more armies on the board): peace is for the weaker side.
+  const stronger = r.band !== 'ally' && totalArmies(s, human) > totalArmies(s, ai);
   let accepted: boolean;
-  if (r.band === 'ally' || r.band === 'even') accepted = true;
+  if (stronger) accepted = false;
+  else if (r.band === 'ally' || r.band === 'even') accepted = true;
   else if (r.band === 'hostile') accepted = false;
   else accepted = roll() < WARY_ACCEPT[s.players[ai].personality ?? 'classic'];
-  const reason = accepted ? `${name} agrees${SEP}three rounds` : `${name} refuses${SEP}${refusalPhrase(s, ai, human, r)}`;
+  const why = stronger && r.band === 'even' ? (s.players[human]?.kind === 'human' ? 'you are stronger' : `${nameOf(s, human)} is stronger`) : refusalPhrase(s, ai, human, r);
+  const reason = accepted ? `${name} agrees${SEP}three rounds` : `${name} refuses${SEP}${why}`;
   return { accepted, reason, standing: r.band };
 }
 

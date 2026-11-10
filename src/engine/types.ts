@@ -41,6 +41,20 @@ export interface PlayerConfig {
   difficulty?: AiDifficulty;
   /** AI seats only (additive): how this seat plays. Unset = the classic AI. */
   personality?: AiPersonality;
+  /**
+   * Additive (v6): extra armies this seat receives at the start of each of its turns (a head start for a
+   * weaker friend, and what "Hard" means for an AI seat; see DIFFICULTY_HANDICAP in src/game/presets.ts).
+   * Unset or 0 = none. Clamped to 0..10. Shown in the turn's ReinforcementBreakdown as `handicap`.
+   */
+  handicap?: number;
+}
+
+/** Additive (v6): the capitals house rule (config.capitals). See `capitalOf` / `capitalHolders` in rules.ts. */
+export interface CapitalsRule {
+  /** Armies a capital pays whoever holds it, at the start of each of their turns (0..5). */
+  bonus: number;
+  /** Holding every seat's capital at once wins the game (gameOver by: 'capitals'). */
+  holdAllWins?: boolean;
 }
 
 export interface GameConfig {
@@ -83,6 +97,19 @@ export interface GameConfig {
    * engine's rules are unchanged by this field; the renderer picks the pack's geometry from it.
    */
   mapId?: string;
+  /**
+   * Additive (v6): the first player's opening turn has no attack (place and fortify only). Unset = on for a
+   * 2-player game without the neutral seat, off otherwise. Attacks in that
+   * turn are refused with OPENING_NO_ATTACK; `attacksLocked(state)` says when it applies.
+   */
+  quietOpening?: boolean;
+  /**
+   * Additive (v6): pin the seat that moves first (tests, rematches). Unset = drawn with state.rng among the
+   * human seats when there is at least one, among all seats otherwise (one draw either way).
+   */
+  firstPlayer?: PlayerId;
+  /** Additive (v6): the capitals house rule. Absent = off. */
+  capitals?: CapitalsRule;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +180,12 @@ export interface PlayerState {
    * first loss.
    */
   lastTakenBy?: Partial<Record<PlayerId, { territory: TerritoryId; round: number }>>;
+  /**
+   * Additive (v6, config.capitals): this seat's capital, assigned when main play starts (no rng: the owned
+   * territory with the most own neighbours, then most armies, then first in map order). It stays this seat's
+   * capital whoever holds it, and pays its holder config.capitals.bonus a turn.
+   */
+  capital?: TerritoryId;
 }
 
 export type Phase =
@@ -192,8 +225,9 @@ export type Phase =
       /**
        * Additive (v5 G): 'mission' when the winner met their secret mission (reason is then 'percent', a
        * goal short of the world, so a v4 reader still sees a board win). Absent for every other win.
+       * v6: 'capitals' when the winner held every capital (config.capitals.holdAllWins; reason 'percent').
        */
-      by?: 'mission';
+      by?: 'mission' | 'capitals';
       /** Additive (v5 G): with by 'mission', the headline sentence: 'Vermilion holds Asia and Africa'. */
       mission?: string;
     };
@@ -334,7 +368,11 @@ export interface ReinforcementBreakdown {
   territoryCount: number;
   base: number; // max(3, floor(territoryCount / 3))
   continents: { continent: ContinentId; bonus: number }[];
-  total: number; // base + continent bonuses (card trades are separate events)
+  total: number; // base + continent bonuses (+ handicap + capitals, v6) (card trades are separate events)
+  /** Additive (v6): the seat's per-turn head start (PlayerConfig.handicap), when > 0. Included in total. */
+  handicap?: number;
+  /** Additive (v6, config.capitals): capitals the seat holds (its own and taken ones), each paying `bonus`. Included in total. */
+  capitals?: { territory: TerritoryId; of: PlayerId; bonus: number }[];
 }
 
 export type GameEvent =
@@ -377,7 +415,15 @@ export type GameEvent =
       defenderLosses: number;
       blitz: boolean;
     }
-  | { type: 'territoryConquered'; player: PlayerId; from: TerritoryId; to: TerritoryId; previousOwner: PlayerId }
+  | {
+      type: 'territoryConquered';
+      player: PlayerId;
+      from: TerritoryId;
+      to: TerritoryId;
+      previousOwner: PlayerId;
+      /** Additive (v6, config.capitals): `to` is this seat's capital (the named moment: "Sage's capital falls"). */
+      capitalOf?: PlayerId;
+    }
   | {
       type: 'armiesMoved';
       player: PlayerId;
@@ -411,7 +457,7 @@ export type GameEvent =
    */
   | { type: 'truceExpired'; from: PlayerId; to: PlayerId; reason: 'time' | 'eliminated' | 'standing' }
   /** Additive (v5 G): `by: 'mission'` and `mission` (the headline sentence) when a secret mission won it. */
-  | { type: 'gameOver'; winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit'; by?: 'mission'; mission?: string };
+  | { type: 'gameOver'; winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit'; by?: 'mission' | 'capitals'; mission?: string };
 
 export type GameEventType = GameEvent['type'];
 

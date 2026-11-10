@@ -120,14 +120,109 @@ export function continentOwners(state: GameState): Record<ContinentId, PlayerId 
   return out;
 }
 
-/** Base = max(3, floor(territories / 3)) + the map's continent bonuses. Card trades are separate. */
+/**
+ * Base = max(3, floor(territories / 3)) + the map's continent bonuses. Card trades are separate.
+ * v6: + the seat's handicap (PlayerConfig.handicap) + every capital it holds (config.capitals), each listed.
+ */
 export function reinforcementsFor(state: GameState, player: PlayerId): ReinforcementBreakdown {
   const m = mapOf(state);
   const territoryCount_ = territoryCount(state, player);
   const base = Math.max(3, Math.floor(territoryCount_ / 3));
   const continents = continentsOwned(state, player).map((c) => ({ continent: c, bonus: m.continents[c].bonus }));
-  const total = base + continents.reduce((s, c) => s + c.bonus, 0);
-  return { territoryCount: territoryCount_, base, continents, total };
+  let total = base + continents.reduce((s, c) => s + c.bonus, 0);
+  const out: ReinforcementBreakdown = { territoryCount: territoryCount_, base, continents, total };
+  const h = handicapOf(state, player);
+  if (h > 0) {
+    out.handicap = h;
+    total += h;
+  }
+  const bonus = state.config.capitals?.bonus ?? 0;
+  if (bonus > 0 && territoryCount_ > 0) {
+    const held: { territory: TerritoryId; of: PlayerId; bonus: number }[] = [];
+    for (const p of state.players) if (p.capital && state.territories[p.capital]?.owner === player) held.push({ territory: p.capital, of: p.id, bonus });
+    if (held.length) {
+      out.capitals = held;
+      total += bonus * held.length;
+    }
+  }
+  out.total = total;
+  return out;
+}
+
+/** v6: a seat's per-turn head start (PlayerConfig.handicap; the neutral seat has none). */
+export function handicapOf(state: GameState, player: PlayerId): number {
+  const h = state.config.players[player]?.handicap;
+  return typeof h === 'number' && h > 0 ? h : 0;
+}
+
+// ---------------------------------------------------------------------------
+// v6: the quiet opening (2 players)
+// ---------------------------------------------------------------------------
+
+/** The refusal (and the line the UI shows) for an attack in the quiet opening. */
+export const OPENING_NO_ATTACK = 'No attacks on the opening turn.';
+
+/**
+ * True when the game uses the quiet opening: config.quietOpening, or (unset) exactly 2 players without the neutral
+ * seat (with it the first mover already wins ~51–57% and the rule only adds a round; artifacts/v6-engine/opening.log).
+ */
+export function quietOpeningOn(config: { players: unknown[]; quietOpening?: boolean; neutral?: boolean }): boolean {
+  return config.quietOpening ?? (config.players.length === 2 && !config.neutral);
+}
+
+/** True during the first player's opening turn of a quiet-opening game: no attack, place and fortify only. */
+export function attacksLocked(state: GameState): boolean {
+  return state.turn === 1 && state.currentPlayer === state.firstPlayer && quietOpeningOn(state.config);
+}
+
+// ---------------------------------------------------------------------------
+// v6: capitals (config.capitals)
+// ---------------------------------------------------------------------------
+
+/**
+ * The capital a seat would get from the board as it stands: its territory with the most own neighbours, then
+ * the most armies, then first in map order. No rng. Null when it holds nothing.
+ */
+export function pickCapital(state: GameState, player: PlayerId): TerritoryId | null {
+  const m = mapOf(state);
+  let best: TerritoryId | null = null;
+  let bn = -1;
+  let ba = -1;
+  for (const t of m.territoryIds) {
+    const x = state.territories[t];
+    if (x.owner !== player) continue;
+    let own = 0;
+    for (const n of m.adjacency[t]) if (state.territories[n].owner === player) own++;
+    if (own > bn || (own === bn && x.armies > ba)) {
+      best = t;
+      bn = own;
+      ba = x.armies;
+    }
+  }
+  return best;
+}
+
+/** Whose capital `t` is, or -1. */
+export function capitalOf(state: GameState, t: TerritoryId): PlayerId {
+  for (const p of state.players) if (p.capital === t) return p.id;
+  return -1;
+}
+
+/** Every capital on the board and who holds it, in seat order. Empty without config.capitals. */
+export function capitalHolders(state: GameState): { of: PlayerId; territory: TerritoryId; holder: PlayerId }[] {
+  const out: { of: PlayerId; territory: TerritoryId; holder: PlayerId }[] = [];
+  for (const p of state.players) if (p.capital) out.push({ of: p.id, territory: p.capital, holder: state.territories[p.capital].owner });
+  return out;
+}
+
+/** With holdAllWins: the living seat that holds every capital, or -1. */
+export function capitalsWinner(state: GameState): PlayerId {
+  if (!state.config.capitals?.holdAllWins) return -1;
+  const cs = capitalHolders(state);
+  if (cs.length < 2) return -1;
+  const h = cs[0].holder;
+  if (h < 0 || state.players[h]?.eliminated || state.players[h]?.neutral) return -1;
+  return cs.every((c) => c.holder === h) ? h : -1;
 }
 
 /** Attacker dice allowed from `from`: min(3, armies − 1), 0 if it can't attack. */
@@ -255,7 +350,9 @@ export function alivePlayers(state: GameState): PlayerId[] {
  * Winner by territory count (domination / percent / last standing), or null.
  * Reason is 'domination' at 100% (or last player standing), 'percent' below that.
  */
-export function checkWinner(state: GameState): { winner: PlayerId; reason: 'domination' | 'percent' } | null {
+export function checkWinner(
+  state: GameState,
+): { winner: PlayerId; reason: 'domination' | 'percent'; by?: 'capitals' } | null {
   const alive = alivePlayers(state);
   if (alive.length === 1) return { winner: alive[0], reason: 'domination' };
   const need = territoriesNeeded(state);
@@ -264,6 +361,9 @@ export function checkWinner(state: GameState): { winner: PlayerId; reason: 'domi
     const n = territoryCount(state, p);
     if (n >= need) return { winner: p, reason: need >= size ? 'domination' : 'percent' };
   }
+  // v6: holding every capital wins (config.capitals.holdAllWins).
+  const cw = capitalsWinner(state);
+  if (cw >= 0) return { winner: cw, reason: 'percent', by: 'capitals' };
   return null;
 }
 

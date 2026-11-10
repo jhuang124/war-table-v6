@@ -103,7 +103,8 @@ export interface ScenarioOpts {
 /** A hand-built mid-game state (consistent: 44 cards, eliminated flags match territory counts). */
 export function scenario(o: ScenarioOpts = {}): GameState {
   const n = o.players ?? 2;
-  const s = cloneState(createGame(config(n, o.config)).state);
+  // A hand-built mid-game state: the 2-player quiet opening (v6) would lock its "turn 1", so it is off unless asked for.
+  const s = cloneState(createGame(config(n, { quietOpening: false, ...o.config })).state);
   for (const t of mapOf(s).territoryIds) {
     const spec = o.terr?.[t];
     s.territories[t] = spec ? { owner: spec[0], armies: spec[1] } : { owner: o.fill ?? 0, armies: 1 };

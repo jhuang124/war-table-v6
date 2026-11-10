@@ -1,4 +1,6 @@
 // AI-vs-AI soak: `npm run sim [games] [-- --map <id>]` (default 200 games on classic). Exits non-zero on any failure.
+// v6: the New game time estimates come from `npx tsx scripts/v6/rounds.ts` (per map, the shipped table), not from
+// the rounds lines printed here; the balance tables behind the v6 rules are scripts/v6/exp-*.ts (docs/SPEC.md §11.9).
 //
 // v6 maps: `--map <id>` plays every table on that pack's rules and topology (a hidden pack such as test-twelve
 // too). Tables whose seat count the pack does not support are skipped and say so. The tuning bands below
@@ -73,7 +75,7 @@ interface GameResult {
   /** Per seat: main turns, conquests, eliminations made, truces broken, turns started holding a continent. */
   seatStats: SeatStats[];
   /** v5 G: 'mission' when a secret mission ended it, with the winner's goal kind and the headline. */
-  by?: 'mission';
+  by?: 'mission' | 'capitals';
   missionKind?: string;
   headline?: string;
 }

@@ -15,9 +15,9 @@ export interface PersonalityInfo {
 export const PERSONALITY_IDS: AiPersonality[] = ['turtle', 'opportunist', 'warlord'];
 
 export const PERSONALITIES: Record<AiPersonality, PersonalityInfo> = {
-  turtle: { id: 'turtle', name: 'Turtle', line: 'Builds and holds continents. Keeps its word.' },
-  opportunist: { id: 'opportunist', name: 'Opportunist', line: 'Hits weak neighbours and avoids fair fights.' },
-  warlord: { id: 'warlord', name: 'Warlord', line: 'Presses attacks and chases eliminations. Remembers who hurt it.' },
+  turtle: { id: 'turtle', name: 'Turtle', line: 'Takes its card, guards its continent, stops. Keeps its word.' },
+  opportunist: { id: 'opportunist', name: 'Opportunist', line: 'Picks on the weakest and whoever is already bleeding.' },
+  warlord: { id: 'warlord', name: 'Warlord', line: 'Fights all turn, takes long odds, never forgets who hurt it.' },
 };
 
 export function isPersonality(x: unknown): x is AiPersonality {
@@ -46,6 +46,21 @@ export interface Temperament {
   breakBar: number;
   /** Truce length it proposes, in rounds. */
   truceRounds: number;
+  /**
+   * v6, Turtle: once the turn's card is in hand, an attack outside the continents it is building must score at
+   * least this (0 = no such bar). It takes its card, finishes or guards its continent, and stops.
+   */
+  settleBar: number;
+  /**
+   * v6, Warlord: takes near-even fights down to these blitz odds (0 = never) against the seat it presses (its
+   * grudge, its hostile, or the table leader) from a stack of 4+.
+   */
+  gambleOdds: number;
+  /**
+   * v6, Opportunist: target value added for the weakest seat and for a seat someone else hit this round, and
+   * taken off every other seat (cheap card grabs aside).
+   */
+  focus: number;
 }
 
 export const TEMPERAMENTS: Record<AiPersonality, Temperament> = {
@@ -60,6 +75,9 @@ export const TEMPERAMENTS: Record<AiPersonality, Temperament> = {
     proposeBias: 0.8,
     breakBar: Infinity,
     truceRounds: 3,
+    settleBar: 5,
+    gambleOdds: 0,
+    focus: 0,
   },
   opportunist: {
     grudgeWeight: 0.5,
@@ -72,6 +90,9 @@ export const TEMPERAMENTS: Record<AiPersonality, Temperament> = {
     proposeBias: 1,
     breakBar: 7,
     truceRounds: 3,
+    settleBar: 0,
+    gambleOdds: 0,
+    focus: 1.0,
   },
   warlord: {
     grudgeWeight: 1.6,
@@ -84,6 +105,9 @@ export const TEMPERAMENTS: Record<AiPersonality, Temperament> = {
     proposeBias: 0.8,
     breakBar: 8,
     truceRounds: 2,
+    settleBar: 0,
+    gambleOdds: 0.4,
+    focus: 0,
   },
 };
 
@@ -95,7 +119,7 @@ export function personaFor(difficulty: AiDifficulty, personality?: AiPersonality
     case 'turtle':
       return {
         ...p,
-        attackThreshold: Math.min(0.92, p.attackThreshold + 0.1),
+        attackThreshold: Math.min(0.92, p.attackThreshold + 0.06),
         goalWeight: p.goalWeight * 1.4,
         completeWeight: p.completeWeight * 1.3,
         breakWeight: p.breakWeight * 0.7,
@@ -118,14 +142,15 @@ export function personaFor(difficulty: AiDifficulty, personality?: AiPersonality
     case 'warlord':
       return {
         ...p,
-        attackThreshold: Math.max(0.5, p.attackThreshold - 0.06),
-        cardGrabThreshold: Math.max(0.5, p.cardGrabThreshold - 0.04),
+        attackThreshold: Math.max(0.5, p.attackThreshold - 0.1),
+        cardGrabThreshold: Math.max(0.5, p.cardGrabThreshold - 0.1),
         elimWeight: p.elimWeight * 2.5,
-        leaderWeight: p.leaderWeight + 0.4,
-        defenseShare: p.defenseShare * 0.6,
-        overextendCare: p.overextendCare * 0.4,
+        leaderWeight: p.leaderWeight,
+        defenseShare: p.defenseShare,
+        overextendCare: p.overextendCare * 0.7,
         hunt: p.concentrate ? true : p.hunt,
-        lookahead: p.concentrate ? Math.max(p.lookahead, 2) : p.lookahead,
+        lookahead: p.concentrate ? Math.max(p.lookahead, 3) : p.lookahead,
+        trade: p.concentrate ? 'timed' : p.trade,
       };
   }
 }

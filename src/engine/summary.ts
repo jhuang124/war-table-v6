@@ -1,7 +1,7 @@
 // legalActionsSummary: everything the UI needs to drive highlights and the action bar, in one cheap call.
 
 import { bonusTerritoryFor, setValueFor, validSets } from './cards';
-import { attackSources, attackTargets, fortifySources, fortifyTargets, mapOf } from './rules';
+import { attackSources, attacksLocked, attackTargets, fortifySources, fortifyTargets, mapOf } from './rules';
 import { UNCLAIMED, type GameState, type PhaseKind, type PlayerId, type TerritoryId } from './types';
 
 export interface TradeOption {
@@ -50,6 +50,12 @@ export interface LegalSummary {
   /** attack or fortify: `endTurn` is legal. */
   canEndTurn: boolean;
   gameOver: { winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit' } | null;
+  /**
+   * Additive (v6): the quiet opening holds (2 players, the first player's opening turn). attackSources is then
+   * empty and an attack is refused with OPENING_NO_ATTACK ('No attacks on the opening turn.'); end the attack
+   * step to fortify. Present (true) only while it holds.
+   */
+  attacksLocked?: boolean;
 }
 
 export function legalActionsSummary(state: GameState): LegalSummary {
@@ -108,7 +114,8 @@ export function legalActionsSummary(state: GameState): LegalSummary {
       break;
     }
     case 'attack':
-      out.attackSources = attackSources(state, player);
+      if (attacksLocked(state)) out.attacksLocked = true;
+      else out.attackSources = attackSources(state, player);
       out.canEndAttack = true;
       out.canEndTurn = true;
       break;
