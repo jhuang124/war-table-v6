@@ -408,6 +408,8 @@ export async function monkeyGame(seed: number, opts: { maxFakeMinutes?: number; 
         for (const f of rafHeld.splice(0)) setTimeout(f, 16);
         note('show tab');
       } else if (y < 0.85) {
+        // v6: the victory screen now rises after the winner's wave, so a decided game can still be on the board
+        if (st()?.phase.kind === 'game-over') return; // the save is gone once the game is decided
         note('save & quit → continue');
         send({ type: 'overlay', overlay: 'pause' });
         send({ type: 'saveAndQuit' });
