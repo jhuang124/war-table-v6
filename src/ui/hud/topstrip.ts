@@ -36,7 +36,6 @@ import { activeMapId } from '../../map/registry';
 const MAP = mapDefOf({ mapId: activeMapId() });
 import { brushMark } from '../../shared/enso';
 import { drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, pop, setEmblem, setEnso, setStyle, setText, svg, toggle } from '../dom';
-import { seatX } from '../vmx';
 import { SeatCard } from './seatcard';
 
 /** The standing as a word, for screen readers (the reason itself is the controller's, in the one line). */
@@ -276,7 +275,7 @@ class Chip {
     }
     // v6: one quiet line under the name, the most pressing first: how close it is to winning (threat), what it
     // has taken from you, else its personality.
-    const x = seatX(vm);
+    const x = vm;
     const gtN = vm.eliminated ? 0 : (vm.grudgeTicks ?? 0);
     const threat = !vm.eliminated && x.threat ? minus(x.threat) : '';
     const quiet = threat || (gtN > 0 ? `took ${gtN} of yours` : '') || pers?.name || '';

@@ -95,6 +95,11 @@ export interface HouseRulesDraft {
    * seat (the engine drops it otherwise).
    */
   missions?: boolean;
+  /**
+   * Additive (v6): "Capitals" — config.capitals (+1 army a turn to whoever holds each seat's capital). A house
+   * rule under More, default off at every seat count.
+   */
+  capitals?: boolean;
 }
 
 /** Additive (v3): one map pack in the New game picker (src/map/registry.ts listMaps). */
@@ -131,7 +136,8 @@ export interface NewGameVM {
   length: LengthPreset;
   setup: SetupPreset;
   house: HouseRulesDraft;
-  lengthOptions: { id: LengthPreset; label: string; detail: string; estimate: string }[];
+  /** `advanced` (additive, v6): the length lives under More (Full conquest); the UI shows it only with the fold open. */
+  lengthOptions: { id: LengthPreset; label: string; detail: string; estimate: string; advanced?: boolean }[];
   setupOptions: { id: SetupPreset; label: string; detail: string }[];
   /** One line above Start, e.g. 'Territories dealt at random · armies placed for you · first to 30 territories wins'. */
   summary: string;
@@ -155,6 +161,11 @@ export interface NewGameVM {
    * open. The HUD toggles it with UiIntent `{ type: 'more', open }` so the fold survives re-renders. Default closed.
    */
   advancedOpen?: boolean;
+  /**
+   * Additive (v6 "difficulty as an honest dial"): the AI difficulty words, in order, with what each means
+   * ('Hard' · '+1 army a turn'; presets DIFFICULTY_LABELS). Absent = the UI's bare words.
+   */
+  difficultyOptions?: { id: AiDifficulty; label: string; detail?: string }[];
 }
 
 /** Additive (v5.1 E3): a Settings key the sheet shows. */
@@ -231,6 +242,20 @@ export interface SeatChipVM {
    * ring is lit and a tap proposes (UiIntent 'proposeTruce').
    */
   truceTarget?: boolean;
+  /**
+   * Additive (v6 "the end, seen coming"): how close this seat is to winning, one plain line, only when it is worth
+   * saying ('needs 8 · holds a set worth 30'). Shown on the seat's card, and quietly under its name on the strip.
+   */
+  threat?: string | null;
+  /** Additive (v6 capitals): the seat's capital (display name) and whether it still holds it. Absent / null = capitals off. */
+  capital?: { territory: string; held: boolean } | null;
+  /** Additive (v6): an AI seat's difficulty as a word ('Easy' / 'Normal' / 'Hard'). Absent for humans. */
+  difficulty?: string | null;
+  /**
+   * Additive (v6): the seat's secret mission, one plain line ('Hold Asia and Africa'), sent only on the seat it
+   * belongs to and only while the reader may see it (that human's own turn). Absent = missions off, or not yours.
+   */
+  mission?: string | null;
 }
 
 /**
@@ -574,6 +599,8 @@ export interface NameCardVM {
    * ('Ural · 19 · held since round 3 · taken from Sage'). Set in answer to a 'stoneHistory' intent. Absent = none.
    */
   history?: string | null;
+  /** Additive (v6): the territory's box on screen (client px), so the note sits beside it, never on it. */
+  rect?: { x: number; y: number; w: number; h: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +624,11 @@ export interface VictoryVM {
    * ('Round 6: Siberia changed hands three times'). Absent = the UI uses the last `ReplayVM.moments` it saw.
    */
   moments?: string[];
+  /**
+   * Additive (v6): honest copy for a game that was called before anyone reached the goal ('Called in round 14 ·
+   * Ochre held the most territories'). Absent / null = a real win.
+   */
+  called?: string | null;
 }
 
 // ---------------------------------------------------------------------------

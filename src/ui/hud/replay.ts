@@ -16,7 +16,6 @@ import type { ReplayVM, UiIntent, VictoryVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { drawIn, EASE_IN_QUAD, h, minus, motion, setStyle, setText, toggle } from '../dom';
 import { heroLine } from '../screens/victory';
-import { victoryX } from '../vmx';
 
 /** The last round's sentence stays on the paper this long before the recap comes. */
 const HOLD_LAST_MS = 1200;
@@ -80,7 +79,7 @@ export class Replay {
     vm = vm ?? null;
     if (vm) {
       heroLine(this.heroTitle, victory?.title ?? `${vm.winner.name} wins`, vm.winner);
-      const called = victory ? (victoryX(victory).called ?? null) : null;
+      const called = victory ? (victory.called ?? null) : null;
       toggle(this.heroCalled, 'hidden', !called);
       setText(this.heroCalled, called ? minus(called) : '');
     }

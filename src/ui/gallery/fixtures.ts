@@ -7,6 +7,7 @@ import type {
   CardsVM,
   GameVM,
   LogLineVM,
+  NameCardVM,
   NewGameVM,
   SeatChipVM,
   SeatRef,
@@ -20,7 +21,6 @@ import type {
 } from '../../game/viewModel';
 import type { PlayerColorId, PlayerStats, TerritoryId, TimelinePoint } from '../../engine/types';
 import { BOARD } from '../../map';
-import type { LengthOptionX, NameCardVMx, SeatChipX, VictoryVMx } from '../vmx';
 
 export const JOHN: SeatRef = { id: 0, name: 'John', color: 'crimson', kind: 'human' };
 export const COBALT: SeatRef = { id: 1, name: 'Slate', color: 'cobalt', kind: 'ai' };
@@ -101,7 +101,7 @@ export const NEW_GAME_PROBLEMS: NewGameVM = {
 
 // ---- in game --------------------------------------------------------------
 
-const chips = (cur: number, o: Partial<Record<number, Partial<SeatChipVM & SeatChipX>>> = {}): SeatChipVM[] =>
+const chips = (cur: number, o: Partial<Record<number, Partial<SeatChipVM>>> = {}): SeatChipVM[] =>
   SEATS.map((seat, i) => ({ seat, current: i === cur, eliminated: false, territories: [14, 11, 9, 8][i], ...(o[i] ?? {}) }));
 
 const btn = (id: ButtonVM['id'], label: string, primary = false): ButtonVM => ({ id, label, primary });
@@ -466,11 +466,11 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('v6-seat-card-ask', 'v6', 'Seat card · hover on Ochre (ask for peace)', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }), { after: 'hoverSeat2' });
   add('v6-seat-sheet', 'v6', 'Seat sheet · touch, Ochre', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }), { after: 'sheetSeat2' });
   add('v6-seat-mine', 'v6', 'Seat sheet · touch, your own seat (mission)', game({ seats: v6Seats, strip: STRIPS.place }), { after: 'sheetSeat0' });
-  const called: VictoryVMx = { ...VICTORY, winner: AMBER, title: 'Ochre leads', subline: 'Round 14 · 16 of 42 territories', called: 'Called in round 14 · Ochre held the most territories', moments: ['Round 6: Siberia changed hands three times', 'Round 11: Ochre took Africa from John'] };
+  const called: VictoryVM = { ...VICTORY, winner: AMBER, title: 'Ochre leads', subline: 'Round 14 · 16 of 42 territories', called: 'Called in round 14 · Ochre held the most territories', moments: ['Round 6: Siberia changed hands three times', 'Round 11: Ochre took Africa from John'] };
   add('v6-victory-called', 'v6', 'Victory · a called game (honest copy)', root({ screen: 'victory', game: null, victory: called }), { after: 'skipVictoryIntro' });
   add('v6-victory-stats', 'v6', 'Victory · Full stats open', root({ screen: 'victory', game: null, victory: { ...VICTORY, moments: MOMENTS } }), { after: 'openStats' });
   add('v6-replay-called', 'v6', 'Replay · a called game', root({ screen: 'victory', game: { ...BASE_GAME, cards: null, replay: { ...REPLAY, key: 2, winner: AMBER } }, victory: called }));
-  const lengthsX: LengthOptionX[] = [
+  const lengthsX: NewGameVM['lengthOptions'] = [
     { id: 'quick', label: 'Quick', detail: '60% or 12 rounds', estimate: '~40 min' },
     { id: 'evening', label: 'Evening', detail: '70% of the world', estimate: '~60–90 min' },
     { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: '2–3 h', advanced: true },
@@ -482,7 +482,7 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('v6-occupy-folded', 'v6', 'Occupy · count folded but adjustable', game({ strip: STRIPS['occupy-collapsed'], cards: null }));
   add('v6-cards-anytime', 'v6', 'Attack · Cards reachable on your turn', game({ strip: STRIPS.attack, cards: CARDS }));
   add('v6-keys', 'v6', 'Keys sheet (?)', game({ strip: STRIPS.attack, cards: null }), { after: 'keys' });
-  const nc: NameCardVMx = { territory: 'Ural', continent: 'Asia', bonus: 7, owner: JOHN, armies: 19, x: Math.round(_W * 0.6), y: Math.round(_H * 0.3), key: 2, history: 'Held since round 3 · taken from Sage', rect: { x: Math.round(_W * 0.56), y: Math.round(_H * 0.22), w: Math.round(_W * 0.08), h: Math.round(_H * 0.14) } };
+  const nc: NameCardVM = { territory: 'Ural', continent: 'Asia', bonus: 7, owner: JOHN, armies: 19, x: Math.round(_W * 0.6), y: Math.round(_H * 0.3), key: 2, history: 'Held since round 3 · taken from Sage', rect: { x: Math.round(_W * 0.56), y: Math.round(_H * 0.22), w: Math.round(_W * 0.08), h: Math.round(_H * 0.14) } };
   add('v6-name-card', 'v6', 'Territory note · beside the pointer, off the territory', game({ strip: STRIPS.attack, cards: null, nameCard: nc }));
   add('v6-title-save', 'v6', 'Title with a save (Continue, thumbnail plate)', root({ screen: 'title', game: null, save: { summary: 'Round 7 · John vs 3 AI', sketch: { owners } } }));
   add('v6-a2hs', 'v6', 'Title · Add to Home Screen line (phones)', root({ screen: 'title', game: null }), { after: 'a2hs' });

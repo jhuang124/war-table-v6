@@ -7,6 +7,7 @@ import { createController } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY, SETTINGS_KEY, UI_KEY, type KV } from '../../src/game/storage';
 import type { GameState, TerritoryId } from '../../src/engine';
 import { board as fixture } from './fixtures';
+import { buildNewGameVM, defaultDraft, draftSummary, draftToConfig, removeSeat, sanitizeDraft } from '../../src/game/presets';
 
 function fakeBoard() {
   const nop = () => undefined;
@@ -153,3 +154,38 @@ describe('9 · saves per release', () => {
   });
 });
 
+
+describe('3 · the seat picker', () => {
+  it('capitals are a house rule, off by default at every seat count, on only when switched on', () => {
+    for (const n of [2, 3, 4]) {
+      let d = defaultDraft();
+      while (d.seats.length > n) d = removeSeat(d, d.seats.length - 1);
+      expect(d.house.capitals).toBe(false);
+      expect(draftToConfig(d, 1).capitals).toBeUndefined();
+      expect(draftSummary(d)).not.toMatch(/capital/);
+      const on = sanitizeDraft({ ...d, house: { ...d.house, capitals: true } });
+      expect(on.house.capitals).toBe(true);
+      expect(draftToConfig(on, 1).capitals).toEqual({ bonus: 1 });
+      expect(draftSummary(on)).toMatch(/each capital pays \+1 a turn$/);
+    }
+    // a pre-v5.1 remembered draft never brings it in
+    expect(sanitizeDraft({ house: { capitals: true } }).house.capitals).toBe(false);
+  });
+
+  it('difficulty says what it means; Full conquest is advanced; Quick is 60% or 8 rounds; no Draft', () => {
+    const vm = buildNewGameVM(defaultDraft());
+    expect(vm.difficultyOptions).toEqual([
+      { id: 'easy', label: 'Easy', detail: 'plays loose' },
+      { id: 'normal', label: 'Normal' },
+      { id: 'hard', label: 'Hard', detail: '+1 army a turn' },
+    ]);
+    expect(vm.lengthOptions.find((o) => o.id === 'full')?.advanced).toBe(true);
+    expect(vm.lengthOptions.filter((o) => o.advanced).map((o) => o.id)).toEqual(['full']);
+    expect(vm.lengthOptions.find((o) => o.id === 'quick')?.detail).toBe('60% or 8 rounds');
+    expect(draftToConfig(sanitizeDraft({ ...defaultDraft(), house: { ...defaultDraft().house, draft: true } }), 1).setupMode).toBe('random');
+    // Hard is the hard AI +1 army a turn
+    const d = defaultDraft();
+    d.seats[1] = { ...d.seats[1], difficulty: 'hard' };
+    expect(draftToConfig(d, 1).players[1]).toMatchObject({ difficulty: 'hard', handicap: 1 });
+  });
+});

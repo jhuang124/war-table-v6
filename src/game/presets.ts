@@ -49,14 +49,18 @@ export function isAdvancedLength(id: LengthPreset): boolean {
 }
 
 /**
- * v6 capitals (config.capitals): each seat's capital pays its holder +1 army a turn. On by default at 3–4 seats,
- * where it passed every gate against the same build without it (scripts/v6/exp-capitals.ts, n=800 per row:
- * median rounds 10→10 / 13→13, first mover 32.5→33.5% / 20.6→19.5%, round-5 leader wins 57.9→54.5% /
- * 39.9→41.3%, none over before round 4). Off at 2 seats: the first mover went 47.6→55.1% (fails ±3). +2 and
- * "holding every capital wins" failed (docs/SPEC.md §11.9).
+ * v6 capitals (config.capitals): each seat's capital pays its holder +1 army a turn. Measured on at 3–4 seats it
+ * passed every gate against the same build without it (scripts/v6/exp-capitals.ts, n=800 per row: median rounds
+ * 10→10 / 13→13, first mover 32.5→33.5% / 20.6→19.5%, round-5 leader wins 57.9→54.5% / 39.9→41.3%), and at 2 seats
+ * it failed (first mover 47.6→55.1%). Lead's call (v6 integration): it ships as a house rule under More, off at
+ * every seat count (capitals change hands 21–35 times a game, too often to be a moment, and a default that differs
+ * by seat count is friction). `CAPITALS_ON_BY_SEATS` keeps the engine lane's measured recommendation for reference;
+ * nothing reads it for the default.
  */
 export const CAPITALS_RULE: CapitalsRule = { bonus: 1 };
 export const CAPITALS_ON_BY_SEATS: Record<number, boolean> = { 2: false, 3: true, 4: true };
+/** The Capitals switch's one line (New game → More). */
+export const CAPITALS_LINE = "Each seat's best-held territory is its capital · whoever holds it gets +1 army a turn";
 
 export interface NewGameDraft {
   seats: SeatDraft[];
@@ -142,7 +146,7 @@ export function defaultDraft(): NewGameDraft {
     length: 'evening',
     setup: 'quickDeal',
     // v5.1 D: house rules off (neutral seat, missions); standing (`truces`, config.diplomacy) is the game, not a rule.
-    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: false, truces: true, missions: false },
+    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: false, truces: true, missions: false, capitals: false },
     mapId: DEFAULT_MAP_ID,
     v51: true,
   };
@@ -190,6 +194,8 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
       truces: o.house?.truces !== false,
       // v5 G: off unless switched on
       missions: fresh && o.house?.missions === true,
+      // v6: a house rule, off unless switched on
+      capitals: fresh && o.house?.capitals === true,
     },
   };
 }
@@ -263,7 +269,8 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
     ...(neutral ? { neutral: true } : {}),
     ...(diplomacy ? { diplomacy: true } : {}),
     ...(d.house.missions === true && missionsApply(d) ? { missions: true } : {}),
-    ...(CAPITALS_ON_BY_SEATS[n] ? { capitals: { ...CAPITALS_RULE } } : {}),
+    // v6: capitals are a house rule, off unless switched on (lead's decision; see CAPITALS_RULE).
+    ...(d.house.capitals === true ? { capitals: { ...CAPITALS_RULE } } : {}),
     mapId: mapIdOf(d.mapId ?? null),
     players,
     // v6: Draft setup is no longer offered (it pushed the 2-player first mover to ~90%); territories are dealt.
@@ -395,7 +402,9 @@ export function draftSummary(d: NewGameDraft): string {
       : turnLimit
         ? `first to ${need} territories${m ? ' or a secret mission' : ''}, or most after ${turnLimit} rounds`
         : `first to ${need} territories${m ? ' or a secret mission' : ''} wins`;
-  return [deal, place, goal].join(SEP);
+  // v6: the capitals house rule, when on, in the same plain sentence.
+  const caps = d.house.capitals === true ? 'each capital pays +1 a turn' : null;
+  return [deal, place, goal, ...(caps ? [caps] : [])].join(SEP);
 }
 
 export function buildNewGameVM(d: NewGameDraft): NewGameVM {
@@ -412,7 +421,8 @@ export function buildNewGameVM(d: NewGameDraft): NewGameVM {
     lengthOptions: [
       { id: 'quick', label: 'Quick', detail: `${q.dominationPercent}% or ${q.turnLimit} rounds`, estimate: lengthEstimate('quick', d.seats, neutral, d.mapId) },
       { id: 'evening', label: 'Evening', detail: `${e.dominationPercent}% ${ofWhere(d.mapId)}`, estimate: lengthEstimate('evening', d.seats, neutral, d.mapId) },
-      { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: lengthEstimate('full', d.seats, neutral, d.mapId) },
+      // v6: Full conquest lives under More (the UI shows an `advanced` length only with the fold open).
+      { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: lengthEstimate('full', d.seats, neutral, d.mapId), ...(isAdvancedLength('full') ? { advanced: true } : {}) },
     ],
     setupOptions: [
       { id: 'quickDeal', label: 'Quick deal', detail: 'armies placed for you' },
@@ -424,6 +434,10 @@ export function buildNewGameVM(d: NewGameDraft): NewGameVM {
     canAddSeat: n < 4,
     canRemoveSeat: n > 2,
     missionsApply: missionsApply(d),
+    difficultyOptions: (['easy', 'normal', 'hard'] as const).map((id) => {
+      const [label, ...rest] = DIFFICULTY_LABELS[id].split(SEP);
+      return { id, label, ...(rest.length ? { detail: rest.join(SEP) } : {}) };
+    }),
   };
 }
 

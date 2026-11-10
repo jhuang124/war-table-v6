@@ -14,7 +14,6 @@ import { uiButton } from '../controls';
 import { drawIn, EASE_BRUSH, emblem, h, hashSeed, minus, motion, ringEl, setStyle, svg, toggle } from '../dom';
 import { isPhone } from '../layout';
 import { sheetDrop, sheetIn, watchScrollFade } from '../sheet';
-import { victoryX } from '../vmx';
 
 type Send = (i: UiIntent) => void;
 
@@ -232,7 +231,7 @@ export class VictoryScreen {
     this.mark.append(ringEl(seed, 1, undefined, { cls: 'v-crest-ring', weight: 1.6 }), emblem(vm.winner.color, 'emb v-crest-emb', 'light'));
     heroLine(this.title, vm.title, vm.winner);
     this.sub.textContent = minus(vm.subline);
-    const called = victoryX(vm).called ?? null;
+    const called = vm.called ?? null;
     toggle(this.called, 'hidden', !called);
     this.called.textContent = called ? minus(called) : '';
 

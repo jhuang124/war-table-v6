@@ -13,7 +13,6 @@ import { uiButton } from '../controls';
 import { drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, toggle } from '../dom';
 import { layout } from '../layout';
 import { dragToDismiss, grabHandle, sheetIn, sheetOut } from '../sheet';
-import { seatX } from '../vmx';
 
 const STANDING_LINE = { ally: 'Your ally', even: 'Even with you', wary: 'Wary of you', hostile: 'Hostile to you' } as const;
 
@@ -23,7 +22,7 @@ const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0,
 
 /** The card's lines for a seat, in reading order (each a class and its words). Pure: the gallery and tests can read it. */
 export function seatCardLines(vm: SeatChipVM, continentName: (id: string) => string, touch: boolean): { cls: string; text: string }[] {
-  const x = seatX(vm);
+  const x = vm;
   const out: { cls: string; text: string }[] = [];
   if (vm.eliminated) {
     out.push({ cls: 'scd-facts', text: vm.out ? `Out · taken by ${vm.out.by.name} in round ${vm.out.round}` : 'Out of the game' });
@@ -48,7 +47,7 @@ export function seatCardLines(vm: SeatChipVM, continentName: (id: string) => str
 
 /** The title row's quiet words after the name: 'Hard · Warlord', 'Neutral'. */
 function kindWords(vm: SeatChipVM): string {
-  const x = seatX(vm);
+  const x = vm;
   if (vm.neutral) return 'Neutral armies';
   const w: string[] = [];
   if (vm.seat.kind === 'ai') w.push(x.difficulty ? `${x.difficulty} AI` : 'AI');

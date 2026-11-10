@@ -11,7 +11,6 @@
 //                GameVM.nameCard (the controller never sends one while a fight is armed or its ring is up).
 
 import type { NameCardVM } from '../../game/viewModel';
-import type { NameCardVMx } from '../vmx';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
 import { layout, onLayout } from '../layout';
@@ -299,7 +298,7 @@ export class NameCard {
     this.el.classList.remove('hidden');
     if (!this.slot) {
       // v6: beside the pointer, never on the territory it describes (its box when the controller sends it).
-      this.rect = (vm as NameCardVMx).rect ?? null;
+      this.rect = vm.rect ?? null;
       if (this.px < 0) {
         this.px = vm.x;
         this.py = vm.y;

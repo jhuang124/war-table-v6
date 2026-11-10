@@ -24,7 +24,6 @@ import { moreWord, Segmented, setMoreWord, Switch, uiButton } from '../controls'
 import { animateIn, emblem, ensoEl, h, hashSeed, motion, ringEl, setAttr, setEmblem, setStyle, setText, toggle, underlineEl } from '../dom';
 import { isPhone, layout } from '../layout';
 import { dragToDismiss, grabHandle, sheetIn, watchScrollFade } from '../sheet';
-import type { LengthOptionX } from '../vmx';
 
 type Send = (i: UiIntent) => void;
 
@@ -36,6 +35,8 @@ const about = (s: string): string => s.replace(/~\s*/g, 'about ');
 
 /** v5 G: the Missions switch's one line. */
 const MISSIONS_LINE = 'Each seat gets a secret mission; completing it wins';
+/** v6: the Capitals switch's one line (the controller's words win when it sends them). */
+const CAPITALS_LINE = "Each seat's best-held territory is its capital · whoever holds it gets +1 army a turn";
 
 /** One colour emblem per seat; clicking it opens the six swatches (docs/ROUND2.md §E). */
 class SeatRow {
@@ -197,8 +198,15 @@ class SeatRow {
     this.persLine.style.marginLeft = `${left}px`;
   }
 
-  update(seat: SeatDraft, taken: Set<PlayerColorId>, canRemove: boolean, clash: boolean, personalities: PersonalityOptionVM[] = []): void {
+  private diffOpts: NewGameVM['difficultyOptions'] | null = null;
+
+  update(seat: SeatDraft, taken: Set<PlayerColorId>, canRemove: boolean, clash: boolean, personalities: PersonalityOptionVM[] = [], difficulties?: NewGameVM['difficultyOptions']): void {
     this.seat = seat;
+    // v6: the difficulty words say what each means ('Hard' · '+1 army a turn').
+    if (difficulties && difficulties !== this.diffOpts) {
+      this.diffOpts = difficulties;
+      this.diff.setOptions(difficulties.map((o) => ({ value: o.id, label: o.label, ...(o.detail ? { detail: o.detail } : {}) })));
+    }
     if (personalities !== this.persOpts) {
       this.persOpts = personalities;
       this.pers.setOptions([{ value: 'any' as PersPick, label: 'Any' }, ...personalities.map((p) => ({ value: p.id as PersPick, label: p.name }))]);
@@ -382,7 +390,7 @@ export class NewGameScreen {
   private h: {
     neutral: Switch;
     missions: Switch;
-    draft: Switch;
+    capitals: Switch;
     cards: Segmented<HouseRulesDraft['cardBonus']>;
     fortify: Segmented<HouseRulesDraft['fortifyRule']>;
     batch: Segmented<string>;
@@ -437,7 +445,8 @@ export class NewGameScreen {
     houseLabel.dataset.testid = 'house-toggle';
     const house = h('div', 'house');
     const patch = (p: Partial<HouseRulesDraft>) => send({ type: 'house', patch: p });
-    const draft = new Switch('Draft territories', (v) => patch({ draft: v }), 'Take turns claiming them · adds about 10 min', 'house-draft');
+    // v6: Draft setup is no longer offered; Capitals, a house rule off by default, takes its place.
+    const capitals = new Switch('Capitals', (v) => patch({ capitals: v }), CAPITALS_LINE, 'house-capitals');
     const neutral = new Switch('Neutral armies', (v) => patch({ neutral: v }), 'Two players · a third army holds 14 territories', 'house-neutral');
     const missions = new Switch('Missions', (v) => patch({ missions: v }), MISSIONS_LINE, 'house-missions');
     const cards = new Segmented<HouseRulesDraft['cardBonus']>('seg-row', (v) => patch({ cardBonus: v }), 'Card values', 'house-cards');
@@ -472,7 +481,7 @@ export class NewGameScreen {
     seed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === 'Escape') seed.blur();
     });
-    this.h = { neutral, missions, draft, cards, fortify, batch, seed };
+    this.h = { neutral, missions, capitals, cards, fortify, batch, seed };
     const hf = (label: string, ctl: HTMLElement, detail?: string) => {
       const f = h('div', 'field');
       const l = h('div', 'field-label');
@@ -485,7 +494,7 @@ export class NewGameScreen {
     hg.append(
       neutral.el,
       missions.el,
-      draft.el,
+      capitals.el,
       hf('Card sets', cards.el),
       hf('Fortify', fortify.el),
       hf('Armies per setup turn', batch.el, 'Place your own only'),
@@ -588,7 +597,7 @@ export class NewGameScreen {
     for (const s of vm.seats) counts.set(s.color, (counts.get(s.color) ?? 0) + 1);
     vm.seats.forEach((s, i) => {
       const taken = new Set(vm.seats.filter((_, j) => j !== i).map((x) => x.color));
-      this.rows[i].update(s, taken, vm.canRemoveSeat, (counts.get(s.color) ?? 0) > 1, vm.personalities);
+      this.rows[i].update(s, taken, vm.canRemoveSeat, (counts.get(s.color) ?? 0) > 1, vm.personalities, vm.difficultyOptions);
     });
     const offered = vm.maps?.filter((m) => !m.hidden) ?? [];
     if (offered.length) this.maps.update(offered, vm.mapId ?? offered[0].id);
@@ -599,7 +608,7 @@ export class NewGameScreen {
     // v6: 'Full conquest' (a length the controller marks `advanced`) lives under More: it shows only with the fold
     // open, or while it is the chosen length. '~40 min' reads as '−40' in this serif: it says 'about 40 min'.
     const moreOpen = this.isMoreOpen();
-    const lengths = (vm.lengthOptions as LengthOptionX[]).filter((o) => !o.advanced || moreOpen || o.id === vm.length);
+    const lengths = vm.lengthOptions.filter((o) => !o.advanced || moreOpen || o.id === vm.length);
     const lkey = `${moreOpen}:${lengths.map((o) => o.id).join(',')}`;
     if (lkey !== this.lengthKey || vm.lengthOptions !== this.vm0Lengths) {
       this.lengthKey = lkey;
@@ -620,7 +629,7 @@ export class NewGameScreen {
     na(this.h.neutral, vm.neutralApplies !== false, 'Two players · a third army holds 14 territories', 'Two-player games only');
     this.h.missions.set(hr.missions === true);
     na(this.h.missions, vm.missionsApply !== false, MISSIONS_LINE, 'Three or more players, or two with neutral armies');
-    this.h.draft.set(hr.draft);
+    this.h.capitals.set(hr.capitals === true);
     this.h.cards.set(hr.cardBonus);
     this.h.fortify.set(hr.fortifyRule);
     this.h.batch.set(String(hr.setupBatch));
