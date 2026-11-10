@@ -146,3 +146,24 @@ export const rattle: SoundFn = (ctx, dest, t, { rate, rand }) => {
   tape.filter('lowpass', 3600, 0.7).dcBlock().normalizeWindow(0.25).endFade(0.04);
   return tape.play(ctx, dest, t, rate);
 };
+
+/**
+ * v6 cue 'land' (feel.md row 15): arriving armies set down on their stone. A soft, low wood thunk (a stone set on
+ * a paper-covered table: lower and duller than the cup), a paper settle under it, and a small second touch as the
+ * weight rocks once. Pitchless; ~180 ms. The board scales `volume` with the count that arrived.
+ */
+export const land: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const tape = new Tape(ctx.sampleRate, 0.26);
+  const at = 0.002;
+  // the body: a dull knock, lower than the cup's (kept above ~150 Hz so laptop speakers still carry it)
+  tape.burst(at, { amp: 0.34, attack: 0.026, tau: 0.03, filter: [{ type: 'lowpass', f: 700 }, { type: 'highpass', f: 120 }] }, rand);
+  // the paper under the stone settles
+  tape.burst(at + 0.004, { amp: 0.12, attack: 0.026, tau: 0.022, filter: [{ type: 'bandpass', f: 1500 * jitter(rand, 0.08), q: 0.7 }] }, rand);
+  tape.mode(at + 0.002, 205 * jitter(rand, 0.05), 0.03, 0.3, 0.024);
+  tape.mode(at + 0.002, 410 * jitter(rand, 0.05), 0.014, 0.12, 0.024);
+  // the weight rocks once
+  const rock = at + between(rand, 0.05, 0.065);
+  tape.mode(rock, 215 * jitter(rand, 0.05), 0.016, 0.08, 0.016);
+  tape.dcBlock().endFade(0.04);
+  return tape.play(ctx, dest, t, rate);
+};

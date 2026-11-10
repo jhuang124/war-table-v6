@@ -30,7 +30,9 @@ export type SfxName =
   | 'splash'
   | 'rattle'
   | 'glint'
-  | 'pour';
+  | 'pour'
+  // v6 cues (also reachable as `cue(name)`): see V6Cue
+  | 'land';
 
 export const SFX_NAMES: readonly SfxName[] = [
   'uiClick',
@@ -60,6 +62,7 @@ export const SFX_NAMES: readonly SfxName[] = [
   'rattle',
   'glint',
   'pour',
+  'land',
 ];
 
 /** v4: the cue names as a list (every V4Cue is also an SfxName, so `play()` accepts them too). */
@@ -82,6 +85,12 @@ export type V4Cue = 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';
 export type V5Cue = 'ripple' | 'splash' | 'rattle' | 'glint' | 'pour';
 /** v5: the cue names as a list (every V5Cue is also an SfxName). */
 export const V5_CUES: readonly V5Cue[] = ['ripple', 'splash', 'rattle', 'glint', 'pour'];
+/**
+ * v6 cues (_claude/v6/audit/feel.md row 15): land = arriving armies set down on their stone (a soft wood thunk with a
+ * paper settle under it; `volume` scales with the count that arrived). The board plays it from its landing hook.
+ */
+export type V6Cue = 'land';
+export const V6_CUES: readonly V6Cue[] = ['land'];
 
 export interface PlayOptions {
   /** Per-play gain, 0..2 (1 = designed level). */
@@ -189,7 +198,12 @@ export interface AudioEngine {
   /** extra: fade out every playing/scheduled SFX voice (use with skipAnimations). Music is untouched. */
   stopAll(): void;
   /** v4: play a V4Cue (see the type). Absent on older engines; callers use `audio.cue?.(…)`. */
-  cue?(name: V4Cue | V5Cue, opts?: PlayOptions): void;
+  cue?(name: V4Cue | V5Cue | V6Cue, opts?: PlayOptions): void;
+  /**
+   * v6 (feel.md row 20): duck, don't cut. Every sounding/scheduled effect fades to about −14 dB over `ms` (default
+   * 120) and the score dips with it, then recovers on its own. Replaces `stopAll()` for the knockout.
+   */
+  duck?(ms?: number): void;
   /**
    * v4 (PLAN §4 B3 "the score breathes"): the turn passed. The score takes its next chord change now (the
    * walk keeps its weights; only the moment moves). `toHuman` adds the +2 dB swell over 2 s.

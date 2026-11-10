@@ -218,3 +218,122 @@ export function tierMs(ms: number, tier?: 0 | 1 | 2 | 3): number {
  * (CONQUER_WAIT + MARCH) or, if the attack stops, the attacker's recoil (RECOIL).
  */
 export const READABLE = { STROKE: 300, TICKS: 160, CONQUER_WAIT: 100, MARCH: 340, FLOOD: 650, RECOIL: 300 } as const;
+
+// --- v6 one fight timing table (_claude/v6/audit/feel.md rows 10–16) ----------------------------------------
+/**
+ * Every fight number at 1×, read by the renderer (dice.ts, index.ts) AND the controller's timing model
+ * (src/game/timingModel.ts), so the stub board and the real board can't drift apart again (v5 had the blitz cap
+ * at 3000 in one and 2800 in the other).
+ *
+ * A full roll (single / repeat / a blitz's final): the pour, the last die hangs a breath (HANG) while the room
+ * hushes (HUSH_LEAD before it lands), it lands, and the verdict follows at once: pair 0's gold hairline draws
+ * (HAIR) and lands ≤ 150 ms after the dice settle; pair 1 lands PAIR_GAP later (140–180: two beats, not one).
+ * A decisive roll (it captures) draws its final hairline slower (HAIR_DECISIVE); the hit-stop that follows
+ * belongs to the conquest, not to the roll (so the roll budget never pays for it).
+ */
+export const FIGHT = {
+  SHAKE: 120,
+  TUMBLE: 450,
+  /** The last die's extra hang in the air: the anticipation (the old 250 ms silence after the dice moved). */
+  HANG: 80,
+  SETTLE: 100,
+  /** The landing squash inside SETTLE (the last die touches down SQUASH before the pour window ends). */
+  SQUASH: 90,
+  /** The hush starts this long before the last die lands and ends just before its click. */
+  HUSH_LEAD: 90,
+  /** The verdict's first hairline starts this long after the last die's click (inside its squash). */
+  VERDICT_LEAD: 30,
+  HAIR: 120,
+  HAIR_DECISIVE: 200,
+  PAIR_GAP: 160,
+  /** After the last pair lands: the losers finish dimming (routine), or the hit-stop takes over (decisive). */
+  TAIL: 60,
+  TAIL_DECISIVE: 40,
+  /** A blitz's first roll (shake 80, tumble 320, settle 60, every pair at once 200). */
+  BLITZ_FIRST: 660,
+  /** A blitz's final roll: the dice already in the tray hop hard onto their last faces, then the full verdict. */
+  BLITZ_FINAL_HOP: 300,
+  /** Middle rolls: a beat never shorter than this; a long blitz batches rolls per beat so the cap holds. */
+  MID_MIN: 90,
+  /** Dispatch + a frame or two per middle roll (beat or batched), measured. */
+  MID_OVERHEAD: 15,
+  /** The blitz's planned length (the metric's budget is 3.0 s; the live clamp below aims at BLITZ_BUDGET). */
+  BLITZ_CAP: 2800,
+  BLITZ_BUDGET: 2850,
+  /** The conquest's hit-stop (decisive rolls only, human dice shows only): a held frame, the score ducked. */
+  HIT_STOP: 100,
+  /** The camera's push toward the impact on a decisive roll, as a fraction of the camera distance. */
+  PUSH: 0.025,
+} as const;
+
+/**
+ * A full roll from the shake to the verdict's first hairline: the pour window (shake + tumble + hang + settle) less
+ * the part of the last die's squash the verdict overlaps (it starts VERDICT_LEAD after the last click).
+ */
+export function pourMs(shake: number): number {
+  return shake + FIGHT.TUMBLE + FIGHT.HANG + FIGHT.SETTLE - (FIGHT.SQUASH - FIGHT.VERDICT_LEAD);
+}
+/** A full roll's verdict at 1×: pairs (1–2), decisive or not. */
+export function verdictMs(pairs: number, decisive = false): number {
+  const n = Math.max(1, pairs);
+  // (a one-pair roll's verdict is its first too: it keeps the quick hairline, the hit-stop marks it)
+  const lastHair = decisive && n > 1 ? FIGHT.HAIR_DECISIVE : FIGHT.HAIR;
+  return (n - 1) * FIGHT.PAIR_GAP + lastHair + (decisive ? FIGHT.TAIL_DECISIVE : FIGHT.TAIL);
+}
+/** The blitz's final roll at 1× (2 pairs, decisive: the longest case). */
+export const BLITZ_FINAL_MS = FIGHT.BLITZ_FINAL_HOP + FIGHT.HANG - (FIGHT.SQUASH - FIGHT.VERDICT_LEAD) + verdictMs(2, true);
+/** A single full roll at 1×, the longest case (shake + pour + a decisive two-pair verdict) plus ~40 ms of frames. */
+export const SINGLE_ROLL_MS = pourMs(FIGHT.SHAKE) + verdictMs(2, true) + 40;
+
+/**
+ * A blitz's middle rolls (count − 2 of them) as beats: a long blitz batches `batch` rolls into one beat so no
+ * beat is shorter than MID_MIN and the whole blitz holds BLITZ_CAP. Roll `index` (1 … count − 2) is a beat when
+ * it closes its batch (or is the last middle); every other middle roll is folded (0 ms: its losses land on the
+ * next beat's frame).
+ */
+export function blitzBeats(count: number): { mids: number; batch: number; beats: number; room: number } {
+  const mids = Math.max(0, count - 2);
+  const room = Math.max(0, FIGHT.BLITZ_CAP - FIGHT.BLITZ_FIRST - BLITZ_FINAL_MS - mids * FIGHT.MID_OVERHEAD);
+  if (!mids) return { mids, batch: 1, beats: 0, room };
+  const maxBeats = Math.max(1, Math.floor(room / FIGHT.MID_MIN));
+  const batch = Math.max(1, Math.ceil(mids / maxBeats));
+  return { mids, batch, beats: Math.ceil(mids / batch), room };
+}
+/** Is middle roll `index` a beat (true) or folded into the next beat (false)? */
+export function isBlitzBeat(index: number, count: number): boolean {
+  if (index <= 0 || index >= count - 1) return true;
+  const { batch } = blitzBeats(count);
+  return batch <= 1 || index === count - 2 || (index - 1) % batch === batch - 1;
+}
+/**
+ * Blitz roll durations at 1×: the first roll full, the final the hop + verdict, the middles as beats that start
+ * slow and quicken (max(180, 600 × 0.75^(j−1)) for beat j), scaled into the room left under the cap, floor
+ * MID_MIN; folded middles are 0. A single roll (count ≤ 1) is SINGLE_ROLL_MS.
+ */
+export function blitzRollMs(index: number, count: number): number {
+  if (count <= 1) return SINGLE_ROLL_MS;
+  if (index === 0) return FIGHT.BLITZ_FIRST;
+  if (index === count - 1) return BLITZ_FINAL_MS;
+  if (!isBlitzBeat(index, count)) return 0;
+  const { batch, beats, room } = blitzBeats(count);
+  const plan = (j: number) => Math.max(180, 600 * Math.pow(0.75, j - 1));
+  let total = 0;
+  for (let j = 1; j <= beats; j++) total += plan(j);
+  const j = Math.min(beats, Math.floor((index - 1) / batch) + 1);
+  if (total <= room) return plan(j);
+  // scale the plan down until the floored beats fill exactly the room (the floor never pushes past the cap)
+  const floor = Math.min(FIGHT.MID_MIN, room / Math.max(1, beats));
+  const sum = (s: number) => {
+    let a = 0;
+    for (let k = 1; k <= beats; k++) a += Math.max(floor, plan(k) * s);
+    return a;
+  };
+  let lo = 0;
+  let hi = 1;
+  for (let it = 0; it < 30; it++) {
+    const mid = (lo + hi) / 2;
+    if (sum(mid) > room) hi = mid;
+    else lo = mid;
+  }
+  return Math.max(floor, plan(j) * lo);
+}

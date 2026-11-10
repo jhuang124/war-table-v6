@@ -8,18 +8,15 @@
 
 import type { GameEvent } from '../engine';
 import type { PlayEventOptions } from '../render/BoardView';
-
-const BLITZ_CAP = 3000;
+// v6: ONE timing table. The tier bands and every fight number live in src/render/anim.ts (pure, no WebGL), read
+// by the renderer and by this model alike (v5 had the blitz cap at 3000 here and 2800 in the renderer).
+import { TIER_BANDS as BANDS, blitzRollMs, SINGLE_ROLL_MS } from '../render/anim';
 
 export type Tier = 0 | 1 | 2 | 3;
 
-/** The duration ladder (E5): 0 tick · 1 stroke · 2 soak · 3 breath, in ms at 1×. */
-export const TIER_BANDS: Readonly<Record<Tier, readonly [number, number]>> = {
-  0: [160, 290],
-  1: [400, 650],
-  2: [650, 1200],
-  3: [1600, 2400],
-};
+/** The duration ladder (E5): 0 tick · 1 stroke · 2 soak · 3 breath, in ms at 1× (the renderer's own table). */
+export const TIER_BANDS: Readonly<Record<Tier, readonly [number, number]>> = BANDS;
+export { SINGLE_ROLL_MS };
 
 /**
  * The tier table (E5). A human's roll is a stroke (1); an AI's readable engagement is one tier-1 beat (the
@@ -69,17 +66,9 @@ function diceMs(opts: PlayEventOptions | undefined): number {
     const ticks = 400 / count;
     return (seq?.index ?? 0) === 0 ? 150 + ticks : ticks;
   }
-  if (!seq || seq.count <= 1) return 1200;
-  const { index, count } = seq;
-  if (index === 0) return 700;
-  if (index === count - 1) return 700;
-  // Middle rolls: max(180, 600 × 0.75^(k−1)), scaled uniformly to fit the cap (floor 120).
-  let total = 1400;
-  for (let k = 1; k < count - 1; k++) total += Math.max(180, 600 * Math.pow(0.75, k - 1));
-  const mid = Math.max(180, 600 * Math.pow(0.75, index - 1));
-  if (total <= BLITZ_CAP) return mid;
-  const scale = (BLITZ_CAP - 1400) / (total - 1400);
-  return Math.max(120, mid * scale);
+  if (!seq || seq.count <= 1) return SINGLE_ROLL_MS;
+  // first, middles (beats, or 0 when folded into the next beat), final: the renderer's own plan
+  return blitzRollMs(seq.index, seq.count);
 }
 
 /** The v3 duration of one playEvent at speed 1, before the tier band. */

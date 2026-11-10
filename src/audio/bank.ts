@@ -35,6 +35,7 @@ export const WARM_ORDER: { name: SfxName; variant?: SfxVariant; timbre?: number 
   { name: 'sheet' },
   { name: 'sheet', variant: 'lift' },
   { name: 'diceShake' },
+  { name: 'land' },
   { name: 'diceLand' },
   { name: 'diceLand', timbre: 1 },
   { name: 'diceLand', timbre: 2 },

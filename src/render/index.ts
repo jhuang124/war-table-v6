@@ -16,7 +16,7 @@ import type { GameEvent, GameState, PlayerId, TerritoryId } from '../engine/type
 import { MAP } from './activeMap';
 import type { AudioEngine, PlayOptions, SfxName, StrokeHandle } from '../audio/types';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
-import { Animator, ease, clamp, READABLE, tierMs, type Run } from './anim';
+import { Animator, ease, clamp, READABLE, tierMs, FIGHT, BLITZ_FINAL_MS, blitzRollMs, isBlitzBeat, type Run } from './anim';
 import { buildScene } from './scene';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { TileSet, deepOf, type Tile, type RimMode } from './tiles';
@@ -47,12 +47,10 @@ import {
   type RGB,
 } from './util';
 
-// 3.0 s budget (INK A6), less the measured overhead: the ends' own frames, and per middle roll the
-// dispatch plus a frame or two (MID_OVERHEAD_MS), so a 20-roll blitz holds the cap as well as a 5-roll one.
-const BLITZ_CAP = 2800;
-const MID_OVERHEAD_MS = 15;
-/** The live clamp's target for a whole blitz (the metric's budget is 3.0 s; 150 ms of room for the tail). */
-const BLITZ_BUDGET_MS = 2850;
+// v6: the fight's numbers (blitz cap, budget, per-roll overhead) live in ONE table, anim.ts FIGHT, read by the
+// controller's timing model too.
+const MID_OVERHEAD_MS = FIGHT.MID_OVERHEAD;
+const BLITZ_BUDGET_MS = FIGHT.BLITZ_BUDGET;
 /** Battle tray: fade length, and how long a decided fight's result stays up (docs/ROUND2.md §E). */
 const TRAY_FADE_MS = 300;
 const TRAY_DECIDED_MS = 1000;
@@ -68,29 +66,7 @@ async function loadFonts(): Promise<void> {
   await Promise.race([Promise.all(want.map((f) => document.fonts.load(f, 'AB·+7'))).then(() => undefined), t]).catch(() => undefined);
 }
 
-/**
- * Blitz roll durations (UX.md §8.2, docs/INK.md B §4 "Blitz"): the first roll full (660 ms, no held
- * silence), the last full with the 250 ms silence and the single roll's tumble and settle (1020 ms), the
- * middle ones snapping, compressed so the whole blitz stays ≤ 3.0 s.
- */
-const BLITZ_FIRST_MS = 660;
-const BLITZ_FINAL_MS = 1020;
-export function blitzRollMs(index: number, count: number): number {
-  if (count <= 1) return 1180;
-  if (index === 0) return BLITZ_FIRST_MS;
-  if (index === count - 1) return BLITZ_FINAL_MS;
-  const ends = BLITZ_FIRST_MS + BLITZ_FINAL_MS;
-  let total = ends;
-  for (let k = 1; k < count - 1; k++) total += Math.max(180, 600 * Math.pow(0.75, k - 1));
-  const mid = Math.max(180, 600 * Math.pow(0.75, index - 1));
-  const midCount = count - 2;
-  const room = Math.max(0, BLITZ_CAP - ends - midCount * MID_OVERHEAD_MS);
-  if (total - ends <= room) return mid;
-  const scale = room / (total - ends);
-  // floor 120 ms unless the cap can't hold it (very long blitzes): the cap wins.
-  const floor = Math.min(120, room / midCount);
-  return Math.max(floor, mid * scale);
-}
+export { blitzRollMs };
 
 export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): Promise<BoardView> => {
   const { container, geometry: G } = opts;
@@ -109,7 +85,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
   // --- renderer -------------------------------------------------------------
   const makeRenderer = (): THREE.WebGLRenderer => {
-    const r = new THREE.WebGLRenderer({ antialias: true, stencil: true, powerPreference: 'high-performance', alpha: false });
+    const r = new THREE.WebGLRenderer({ antialias: true, stencil: true, powerPreference: 'default', alpha: false });
     r.setPixelRatio(pixelRatio());
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -340,12 +316,27 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // A blitz's middle rolls share what's left of the 3.0 s budget against the real clock (frames and
   // dispatch cost more on a busy machine), never more than their planned length (blitzRollMs).
   let blitzT0 = 0;
+  /** [v6] The defender's armies when the engagement's first roll began (blitz tension is keyed to what's left). */
+  let blitzD0 = 1;
+  /** [v6] Whose turn the board last started (the human → human handoff pulse). */
+  let turnPlayer: PlayerId | null = null;
+  /** [v6] Timeline marks of the last full roll (test hook; in-page clock). */
+  const fightMarks: { k: string; t: number }[] = [];
+  const mark = (k: string) => {
+    fightMarks.push({ k, t: Math.round(performance.now()) });
+    if (fightMarks.length > 200) fightMarks.splice(0, fightMarks.length - 200);
+  };
+  /** [v6] The last decisive roll (the conquest that follows it gets the hit-stop and the push). */
+  let decisiveAt: { to: TerritoryId; t: number } | null = null;
   const blitzMidMs = (idx: number, count: number): number => {
     const planned = blitzRollMs(idx, count);
-    if (anim.speed !== 1) return planned;
-    const midsLeft = Math.max(1, count - 1 - idx);
-    const left = BLITZ_BUDGET_MS - (performance.now() - blitzT0) - BLITZ_FINAL_MS;
-    return Math.max(0, Math.min(planned, left / midsLeft - MID_OVERHEAD_MS));
+    if (anim.speed !== 1 || planned <= 0) return planned;
+    // the beats still to play (this one included) share what's left; folded rolls only cost their overhead
+    let beatsLeft = 0;
+    for (let k = idx; k < count - 1; k++) if (isBlitzBeat(k, count)) beatsLeft++;
+    const rollsLeft = Math.max(0, count - 1 - idx);
+    const left = BLITZ_BUDGET_MS - (performance.now() - blitzT0) - BLITZ_FINAL_MS - rollsLeft * MID_OVERHEAD_MS;
+    return Math.max(0, Math.min(planned, left / Math.max(1, beatsLeft)));
   };
 
   // --- sound helpers ------------------------------------------------------------
@@ -1038,34 +1029,55 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     }
     return d;
   };
+  /** [v6] A piece's stone centre on screen (container px), for the 44 px hit circle. */
+  const stonePx = (id: TerritoryId): [number, number] | null => {
+    const p = feetOf(id).project(camera);
+    if (p.z > 1) return null;
+    return [(p.x * 0.5 + 0.5) * W, (-p.y * 0.5 + 0.5) * H];
+  };
+  const STONE_HIT_R = 22;
   /**
-   * The territory a finger means: the tile or piece exactly under it; on open water, the nearest
-   * `pool` territory (the selectable ones for a tap, any for the name card) within TAP_TOLERANCE px.
+   * The territory a finger means. [v6] (mobile finding 1) Intent wins over the exact pixel: for a tap (`pool` = the
+   * clickable set) every candidate within TAP_TOLERANCE px is scored by its distance (0 inside its tile, its piece,
+   * or the 44 px circle round its stone) less a bonus for what it would do: a legal target of the armed source
+   * beats a selectable territory, which beats anything else. So a tap 6 px into an unselectable neighbour picks the
+   * legal one you obviously meant; an exact tap on an illegal tile with no legal one near still returns that tile
+   * (the controller refuses it and the board shivers it). For the name card (`pool` = every territory) the exact
+   * tile under the finger wins, as before.
    */
   const touchPick = (cx: number, cy: number, pool: Iterable<TerritoryId>): TerritoryId | null => {
-    const r0 = rectOf();
-    // A number under the finger wins: it is drawn above every piece and tile (a neighbour's figure may
-    // stand over it in 3D, e.g. Argentina's over Peru's plaque at the portrait zoom).
-    const onPlaque = overlay.plaqueAt(cx - r0.left, cy - r0.top);
-    if (onPlaque) return onPlaque;
-    const exact = pick(cx, cy, false);
-    if (exact) return exact;
     const r = rectOf();
     const x = cx - r.left;
     const y = cy - r.top;
+    // A number under the finger is drawn above every piece and tile (a neighbour's figure may stand over it in 3D).
+    const onPlaque = overlay.plaqueAt(x, y);
+    const exact = onPlaque ?? pick(cx, cy, false);
+    const poolSet = pool instanceof Set ? (pool as Set<TerritoryId>) : new Set(pool);
+    const tapping = poolSet !== allSet;
+    // the name card: the exact tile; a tap exactly on a clickable territory: that one
+    if (exact && (!tapping || poolSet.has(exact))) return exact;
     const bp = boardPoint(cx, cy);
     const upp = bp ? unitsPerPx(bp[0], bp[1]) : 0;
     let best: TerritoryId | null = null;
-    let bd = TAP_TOLERANCE;
-    for (const id of pool) {
-      const d = pxDistTo(id, x, y, bp, upp, bd);
-      if (d <= bd) {
-        bd = d;
+    let bs = Infinity;
+    for (const id of poolSet) {
+      let d = pxDistTo(id, x, y, bp, upp, TAP_TOLERANCE);
+      if (tapping) {
+        const sp = stonePx(id);
+        if (sp) d = Math.min(d, Math.max(0, Math.hypot(sp[0] - x, sp[1] - y) - STONE_HIT_R));
+      }
+      if (d > TAP_TOLERANCE) continue;
+      const bonus = !tapping ? 0 : targetSet.has(id) ? 8 : id === exact ? 4 : 2;
+      const sc = d - bonus;
+      if (sc < bs) {
+        bs = sc;
         best = id;
       }
     }
-    return best;
+    return best ?? exact;
   };
+  const allSet = new Set<TerritoryId>(MAP.territoryIds);
+  let targetSet = new Set<TerritoryId>();
   /** Name shown under the finger (the overlay's hover name; the mouse's own hover is restored after). */
   const touchName = (id: TerritoryId | null) => {
     if (id === tNamed) return;
@@ -1136,7 +1148,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         tTimer = null;
         if (disposed || tMode !== 'maybe' || touches.size !== 1) return;
         const p = [...touches.values()][0];
-        const lid = touchPick(p.x, p.y, MAP.territoryIds);
+        const lid = touchPick(p.x, p.y, allSet);
         if (!lid) return;
         tMode = 'long';
         stroke = null;
@@ -1158,6 +1170,29 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       tPinch = pinchOf();
     }
   };
+  const STROKE_HOLD_MS = 150;
+  let lastWaterTap: { x: number; y: number; t: number } | null = null;
+  const strokeIntent = (from: TerritoryId, targets: Set<TerritoryId>, p: { x: number; y: number; x0: number; y0: number; t0: number }, now: number): boolean => {
+    if (now - p.t0 >= STROKE_HOLD_MS) return true;
+    const r = rectOf();
+    const dx = p.x - p.x0;
+    const dy = p.y - p.y0;
+    const dl = Math.hypot(dx, dy) || 1;
+    const a = projPx(tiles.get(from).anchorW, camera);
+    const sx = p.x0 - r.left;
+    const sy = p.y0 - r.top;
+    for (const t of targets) {
+      const b = projPx(tiles.get(t).anchorW, camera);
+      // from where the finger went down (it may be off the anchor) toward the target, and from the source's own centre
+      for (const o of [[sx, sy], a]) {
+        const tx = b[0] - o[0];
+        const ty = b[1] - o[1];
+        const tl = Math.hypot(tx, ty) || 1;
+        if ((dx * tx + dy * ty) / (dl * tl) > 0.8) return true;
+      }
+    }
+    return false;
+  };
   const onTouchMove = (e: PointerEvent) => {
     const p = touches.get(e.pointerId);
     if (!p) return;
@@ -1171,11 +1206,14 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       clearTimer();
       touchPress(null);
       touchName(null);
-      if (stroke) {
+      // [v6] (mobile finding 2) a drag pans unless it means an attack: it started on one of your stones that can
+      // attack AND either the finger held there ~150 ms first, or it heads toward one of that stone's targets.
+      if (stroke && strokeIntent(stroke.from, stroke.targets, p, e.timeStamp)) {
         tMode = 'stroke';
         strokeStart(p.x, p.y);
         return;
       }
+      stroke = null;
       tMode = 'pan';
       rig.touchBegin();
       rig.touchPan([p.x0 - r.left, p.y0 - r.top], [p.x - r.left, p.y - r.top]);
@@ -1191,7 +1229,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     }
     if (tMode === 'long') {
       // Scrub: the card follows the finger to the tile under it.
-      const id = touchPick(p.x, p.y, MAP.territoryIds);
+      const id = touchPick(p.x, p.y, allSet);
       if (id) showLong(id, p.x, p.y);
       return;
     }
@@ -1244,7 +1282,19 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     if (mode !== 'maybe' || cancelled) return;
     if (e.timeStamp - p.t0 >= LONG_PRESS_MS || Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > TOUCH_SLOP) return;
     const id = touchPick(e.clientX, e.clientY, clickable);
-    if (!id) return;
+    if (!id) {
+      // [v6] a double-tap on open water toggles the portrait whole-world overview
+      if (rig.mode === 'fill' && !pick(e.clientX, e.clientY, false)) {
+        const prev = lastWaterTap;
+        lastWaterTap = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+        if (prev && e.timeStamp - prev.t < 350 && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 40) {
+          lastWaterTap = null;
+          setOverview(!rig.overview);
+        }
+      }
+      return;
+    }
+    lastWaterTap = null;
     const info = pointerInfo(e, id, 0);
     for (const cb of clickCbs) {
       try {
@@ -1336,6 +1386,56 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const a = toWorld(t.bbox[0], (t.bbox[1] + t.bbox[3]) / 2, TILE_TOP).project(camera);
     const b = toWorld(t.bbox[2], (t.bbox[1] + t.bbox[3]) / 2, TILE_TOP).project(camera);
     return Math.abs(b.x - a.x) * 0.5 * W < 24;
+  };
+  // --- [v6] phones: the whole-world overview and the armed fight framed above the tray (mobile finding 3) --------
+  const overviewCbs: ((on: boolean) => void)[] = [];
+  const setOverview = (on: boolean) => {
+    if (rig.mode !== 'fill' || rig.overview === on) return;
+    rig.overview = on;
+    rig.retarget();
+    if (reduced || anim.instant) cutTo({ ...rig.home });
+    else void rig.goHome();
+    invalidate();
+    for (const cb of overviewCbs) {
+      try {
+        cb(on);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+  let phoneFightKey = '';
+  /**
+   * When a fight is armed on a portrait phone, ease so attacker and target sit together in the free band above the
+   * dice tray (they used to sit ~350 px from the dice). Only the player's own arming (this happens right after
+   * their input, so it never counts as a camera move during input), never when they've moved the view.
+   */
+  const phoneFightCam = { last: 0 };
+  const phoneFrameFight = (h: BoardHighlights) => {
+    const a = h.arrow && h.arrow.kind === 'attack' ? h.arrow : null;
+    const key = a ? `${a.from}>${a.to}` : '';
+    if (key === phoneFightKey) return;
+    phoneFightKey = key;
+    if (!a || !compact || H <= W || !autoCamera || reduced || anim.instant || rig.userMoved || rig.attract) return;
+    if (!lastState || !isHuman(lastState.currentPlayer)) return;
+    const pts = [tiles.get(a.from).anchorW, tiles.get(a.to).anchorW];
+    const pose = rig.framePose(pts, 1, 1.6);
+    // put the pair's midpoint in the middle of the band between the top HUD and the tray's top
+    const r = rig.region();
+    const trayTop = tray.cy - tray.trayH / 2 - 8;
+    const want = (r.y0 + Math.min(r.y1, trayTop)) / 2;
+    const M = fightMid([a.from, a.to]);
+    for (let it = 0; it < 3; it++) {
+      const cam = rig.cameraAt(pose);
+      const p0 = projPx(M, cam);
+      const p1 = projPx(M.clone().add(new THREE.Vector3(0, 0, 1)), cam);
+      const dpy = p1[1] - p0[1];
+      if (!(Math.abs(dpy) > 0.01)) break;
+      pose.tz += (p0[1] - want) / dpy;
+    }
+    rig.clampPose(pose);
+    phoneFightCam.last = performance.now();
+    void rig.moveTo(pose, 450);
   };
   const frameEngagement = async (from: TerritoryId, to: TerritoryId, run: Run | null) => {
     const pts = [tiles.get(from).anchorW, tiles.get(to).anchorW];
@@ -1466,9 +1566,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       done,
     });
   };
-  const flood = (from: TerritoryId, to: TerritoryId, owner: PlayerId, ms: number, run: Run | null, torn = false): Promise<void> => {
+  const flood = (from: TerritoryId, to: TerritoryId, owner: PlayerId, ms: number, run: Run | null, torn = false, e?: (t: number) => number): Promise<void> => {
     const ep = tiles.entryPoint(from, to);
-    return floodInk(to, [ep[0], ep[1]], owner, ms, run, { torn });
+    return floodInk(to, [ep[0], ep[1]], owner, ms, run, { torn, ease: e });
   };
 
   /**
@@ -1529,6 +1629,138 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       t.rgb = owners[id] === by ? mixRgb(deep, wash, v) : washRgb(lastState, owners[id]);
     });
     await anim.wait(380, run);
+  };
+
+  // --- [v6] the decisive-moment grammar's board-side pieces ---------------------------------------------------
+  /** Wall-clock starts of every hit-stop (test hook: __debug.hitStops). */
+  const hitStops: number[] = [];
+  /** Continents already swept at the conquest that completed them (the later continentGained only refreshes). */
+  const sweptAt = new Map<string, PlayerId>();
+  let pushVer = 0;
+  /** The camera's 2–3 % push toward the impact, then back (never blocks; never part of the pose). */
+  const pushIn = () => {
+    if (reduced || anim.instant || rig.userMoved) return;
+    const ver = ++pushVer;
+    const from = rig.push;
+    void anim
+      .tween({ ms: 220, ease: ease.outCubic, update: (v) => ver === pushVer && (rig.push = from + (FIGHT.PUSH - from) * v) })
+      .then(() => (ver === pushVer ? anim.wait(520) : undefined))
+      .then(() => {
+        if (ver !== pushVer) return;
+        void anim.tween({ ms: 900, ease: ease.inOutSine, update: (v) => ver === pushVer && (rig.push = FIGHT.PUSH * (1 - v)) });
+      });
+  };
+  /**
+   * A flick over a tile's wash (0 → amt → 0 over ms, `waves` swells): 'light' lifts it toward ivory (the shader's
+   * flash), 'dark' presses it toward the deep paper (the dim channel, on top of whatever dim the highlights hold).
+   * The shared shape of the glint, the winner's wave, the drain and the shiver.
+   */
+  const flick = (t: Tile, kind: 'light' | 'dark', amt: number, ms: number, waves = 1) => {
+    if (anim.instant) return Promise.resolve();
+    const key = kind === 'light' ? 'flash' : 'dimFlick';
+    const ver = (t.ver[key] = (t.ver[key] ?? 0) + 1);
+    const base = kind === 'dark' ? t.dim : t.light;
+    const set = (v: number) => {
+      // light: the ivory flash and the hover lightness together (the ink shader caps each one low)
+      if (kind === 'light') {
+        t.flash = v;
+        t.light = base + v;
+      } else t.dim = base + v;
+      t.dirty = true;
+    };
+    return anim.tween({
+      ms,
+      ease: ease.linear,
+      update: (v) => {
+        if (t.ver[key] !== ver) return;
+        set(amt * Math.abs(Math.sin(v * Math.PI * waves)) * (1 - 0.3 * v));
+      },
+      done: () => {
+        if (t.ver[key] === ver) set(0);
+      },
+    });
+  };
+  /** A broken continent's land drains: a dark flick over the old holder's tile. */
+  const drain = (t: Tile) => void flick(t, 'dark', 0.9, 360);
+  /** The win: the winner's coasts brighten and washes lift in one wave from the last capture (≤ 1.2 s). */
+  const winnerWave = (winner: PlayerId, run: Run | null): Promise<void> => {
+    const mine = MAP.territoryIds.filter((id) => owners[id] === winner);
+    if (!mine.length || reduced || anim.instant || (run && run.skipped)) return Promise.resolve();
+    const o = lastConquered ? tiles.get(lastConquered).anchor : tiles.get(mine[0]).anchor;
+    const d = mine.map((id) => Math.hypot(tiles.get(id).anchor[0] - o[0], tiles.get(id).anchor[1] - o[1]));
+    const dMax = Math.max(1, ...d);
+    return Promise.all(
+      mine.map((id, i) => {
+        const t = tiles.get(id);
+        return anim.wait(500 * (d[i] / dMax), run).then(() => {
+          void tw(t, 'glow', t.glow, 1, 160, ease.outQuad).then(() => tw(t, 'glow', 1, 0, 600, ease.inOutSine));
+          return flick(t, 'light', 1, 520);
+        });
+      }),
+    ).then(() => undefined);
+  };
+  /**
+   * [v6] (feel.md row 3) An invalid tap answers on the board: a ~120 ms ink shiver on the tapped tile (its coast
+   * flickers twice, a dark flick over its wash). The controller calls it beside its uiError tick.
+   */
+  const shiver = (id: TerritoryId) => {
+    if (disposed || !MAP.territories[id]) return;
+    const t = tiles.get(id);
+    if (anim.instant) return;
+    if (reduced) {
+      void flick(t, 'dark', 0.9, 120);
+      return;
+    }
+    const ver = (t.ver.glow = (t.ver.glow ?? 0) + 1);
+    void anim.tween({
+      ms: 140,
+      unscaled: true,
+      ease: ease.linear,
+      update: (v) => {
+        if (t.ver.glow !== ver) return;
+        t.glow = Math.abs(Math.sin(v * Math.PI * 2)) * (1 - 0.5 * v);
+        t.dirty = true;
+      },
+      done: () => {
+        if (t.ver.glow === ver) {
+          t.glow = 0;
+          t.dirty = true;
+        }
+      },
+    });
+    void flick(t, 'dark', 1.1, 150, 2);
+    invalidate();
+  };
+  /**
+   * [v6] (feel.md row 23) An AI is about to act from `id`: a short glint on the source's coast (≈ 150 ms up, a
+   * 300 ms fall), so the eye arrives before the stroke does. Never waited on.
+   */
+  const glintSource = (id: TerritoryId) => {
+    if (disposed || !MAP.territories[id] || anim.instant) return;
+    const t = tiles.get(id);
+    void tw(t, 'glow', t.glow, 1, reduced ? 80 : 150, ease.outQuad).then(() => tw(t, 'glow', t.glow, 0, 300, ease.inOutSine));
+    void flick(t, 'light', 1, 300);
+    invalidate();
+  };
+  /**
+   * [v6] (feel.md row 22) The turn passed between two humans: the new seat's coastlines brighten west → east once
+   * (the attack pulse's own shape over all their land, ≈ 500 ms), so the board says whose turn it is. Never waited on.
+   */
+  const seatPulse = (p: PlayerId) => {
+    if (disposed || anim.instant) return;
+    const ids = MAP.territoryIds.filter((id) => owners[id] === p);
+    if (!ids.length) return;
+    const xs = ids.map((id) => tiles.get(id).anchor[0]);
+    const x0 = Math.min(...xs);
+    const span = Math.max(1, Math.max(...xs) - x0);
+    ids.forEach((id, i) => {
+      const t = tiles.get(id);
+      const go = () => void tw(t, 'glow', t.glow, 0.8, reduced ? 120 : 160, ease.outQuad).then(() => tw(t, 'glow', t.glow, 0, reduced ? 300 : 520, ease.inOutSine));
+      const delay = reduced ? 0 : (340 * (xs[i] - x0)) / span;
+      if (delay <= 1) go();
+      else void anim.wait(delay, null, true).then(go);
+    });
+    invalidate();
   };
 
   /**
@@ -1859,6 +2091,35 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const b = projPx(M, rig.leanedCamera(leanGoal.x, leanGoal.z));
     return [b[0] - a[0], b[1] - a[1]];
   };
+  /**
+   * [v6] The tray stays home; the fight moves clear of it. If either fighter's piece (as it will sit once the lean
+   * lands: `shift`) would lie under the ring, the lean takes the board up by the overlap (≤ 0.2 board widths).
+   * Same conditions as the lean (desktop, the player hasn't moved the view, no reduced motion).
+   */
+  const liftAboveTray = (ids: TerritoryId[], shift: [number, number]) => {
+    if (compact || reduced || anim.instant || rig.displaced || rig.userMoved || rig.attract) return;
+    const tx0 = tray.cx - tray.trayW * 0.55;
+    const tx1 = tray.cx + tray.trayW * 0.55;
+    const top = tray.cy - tray.trayH / 2 - 10;
+    let over = 0;
+    for (const id of ids) {
+      const r = overlay.pieceRects(id);
+      if (!r) continue;
+      const x0 = Math.min(r.box[0], r.plaque[0]) + shift[0];
+      const x1 = Math.max(r.box[2], r.plaque[2]) + shift[0];
+      const y1 = Math.max(r.box[3], r.plaque[3]) + shift[1];
+      if (x1 < tx0 || x0 > tx1) continue;
+      over = Math.max(over, y1 - top);
+    }
+    if (over <= 0) return;
+    const M = fightMid(ids);
+    const a = projPx(M, camera);
+    const b = projPx(M.clone().add(new THREE.Vector3(0, 0, 1)), camera);
+    const dpy = b[1] - a[1];
+    if (!(dpy > 0.01)) return;
+    const dz = Math.min(over / dpy, 0.2 * rig.boardW);
+    tweenLean({ x: leanGoal.x, z: leanGoal.z + dz }, LEAN_IN_MS);
+  };
   const leanBack = () => {
     leanKey = '';
     tweenLean({ x: 0, z: 0 }, LEAN_OUT_MS);
@@ -2002,6 +2263,12 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       case 'turnStarted': {
         clearPhase();
         turnBreath();
+        // [v6] between two humans the board itself says whose turn it is: their coasts brighten west → east once
+        {
+          const prev = turnPlayer;
+          turnPlayer = e.player;
+          if (prev !== null && prev !== e.player && isHuman(prev) && isHuman(e.player)) seatPulse(e.player);
+        }
         if (arrowSource === 'event') {
           arrow.hide();
           arrowSource = null;
@@ -2034,7 +2301,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       case 'diceRolled': {
         const idx = o.seq?.index ?? 0;
         const count = o.seq?.count ?? 1;
-        if (idx === 0) blitzT0 = performance.now();
+        if (idx === 0) {
+          blitzT0 = performance.now();
+          blitzD0 = Math.max(1, armies[e.to]);
+        }
         const fromN = Math.max(1, armies[e.from] - e.attackerLosses);
         const toN = Math.max(0, armies[e.to] - e.defenderLosses);
         const vol = isHuman(e.player) || isHuman(e.defender) ? 1 : 0.5;
@@ -2043,7 +2313,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         const key = `${e.from}>${e.to}`;
         if (idx === 0 && isAi(e.player)) {
           if (rig.autoProgress < 1) await waitCamera(run);
-          else if (needsFraming(e.from, e.to)) await frameEngagement(e.from, e.to, run);
+          else if (needsFraming(e.from, e.to)) {
+            // [v6] the source glints while the camera travels: the eye lands on it before the stroke starts
+            glintSource(e.from);
+            await frameEngagement(e.from, e.to, run);
+          }
         }
         const hlMatches = lastHl.arrow?.kind === 'attack' && lastHl.arrow.from === e.from && lastHl.arrow.to === e.to;
         if (!hlMatches && (arrow.key !== key || !arrow.group.visible)) {
@@ -2105,18 +2379,33 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         // the ring is placed in the leaned frame (desktop: beside the fight, clear of every name, numeral and
         // stone, with the header's side chosen with it).
         if (idx === 0) {
+          // [v6] the tray has a home (ux-desktop finding 7): one fixed spot per layout, the band above the bottom
+          // strip, never over the seat strip; the fight leans clear of it instead of the ring chasing the fight.
           const shift = leanTo([e.from, e.to]);
-          if (!tray.showing) placeTrayNearFight(e.from, e.to, shift);
+          if (!tray.showing) {
+            trayHeader = null;
+            lastPlacement = null;
+            tray.moveTo(null);
+          }
+          liftAboveTray([e.from, e.to], shift);
         }
         recede([e.from, e.to], 180);
         tokens.lean(e.from, e.to, true);
         rolling++;
+        mark(`roll${idx}/${count}`);
         try {
           let mode: 'single' | 'repeat' | 'first' | 'middle' | 'final';
           const now = performance.now();
           if (count <= 1) mode = lastPairKey === key && now - lastRollEnd < 3000 ? 'repeat' : 'single';
           else mode = idx === 0 ? 'first' : last ? 'final' : 'middle';
           const fullVerdict = mode === 'single' || mode === 'repeat' || mode === 'final';
+          // [v6] the roll that takes the territory: its final hairline draws slower, the conquest's hit-stop follows
+          const decisive = last && toN <= 0 && fullVerdict;
+          if (decisive) decisiveAt = { to: e.to, t: performance.now() };
+          const midMs = mode === 'middle' ? blitzMidMs(idx, count) : 0;
+          const folded = mode === 'middle' && midMs <= 0;
+          // [v6] blitz tension follows the defender's remaining armies (not a pitch ramp that flatlines at roll 8)
+          const tension = clamp(1 - toN / Math.max(1, blitzD0), 0, 1);
           let hitPlayed = false;
           // [fight v5] the verdict pair by pair (full rolls): each pair's loss ticks on its stone as its gold
           // hairline arrives, with an ink splash on the losing die; the totals and chips land on the last pair.
@@ -2143,16 +2432,21 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             attacker: aPal,
             defender: dPal,
             mode,
-            durMs: mode === 'middle' ? blitzMidMs(idx, count) : undefined,
+            decisive,
+            durMs: mode === 'middle' ? midMs : undefined,
             reduced,
             run,
             // [fight v5] one die at a time (60–90 ms; the controller's stagger, else 70 for a full roll)
             stagger: o.stagger ?? 70,
-            onShake: (ms) => sfx('diceShake', { duration: Math.max(0.06, ms / 1000), volume: vol }),
+            onShake: (ms) => {
+              mark('shake');
+              sfx('diceShake', { duration: Math.max(0.06, ms / 1000), volume: vol });
+            },
             onLand: (side, i) => {
+              mark(`land${side < 0 ? 'A' : 'D'}${i}`);
               if (mode === 'middle' || (reduced && i === 0)) {
-                // the blitz drum: each middle roll's clicks a touch higher as the rolls quicken
-                sfx('diceLand', { volume: vol * (side < 0 ? 1 : 0.8), pan: side * 0.25, rate: Math.min(1.45, 1 + 0.06 * idx) });
+                // the blitz drum: [v6] pitch and weight climb as the defender's armies run out (tension 0 → 1)
+                sfx('diceLand', { volume: vol * (side < 0 ? 0.85 : 0.7) * (1 + 0.25 * tension), pan: side * 0.25, rate: 1 + 0.4 * tension });
               } else if (fullVerdict) {
                 // [fight v5] one click per die; the engine varies timbre and rate per die and hears landings within
                 // 200 ms as one pour, so no rate here (a blitz's final roll plays exactly like a single roll)
@@ -2161,13 +2455,17 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             },
             // The verdict beat (A6/B4): nothing new sounds while the dice sit still, and the score dips.
             // A hair shorter than the beat so the verdict's own 'hit' is never the thing it swallows.
-            onSilence: (ms) => audio?.hush?.(Math.max(0, ms - 30)),
+            // [v6] it now falls BEFORE the last die lands (dice.ts), and ends a hair before its click
+            onSilence: (ms) => {
+              mark('hush');
+              audio?.hush?.(Math.max(0, ms));
+            },
             onVerdict: () => {
               // [fight v5] full rolls: the hit plays per matched pair (onPair), not here
-              if (!hitPlayed && !fullVerdict) {
+              if (!hitPlayed && !fullVerdict && !folded) {
                 hitPlayed = true;
                 const loserSide = e.defenderLosses >= e.attackerLosses ? 0.3 : -0.3;
-                sfx('hit', { volume: (mode === 'middle' ? 0.5 : 1) * vol, pan: loserSide });
+                sfx('hit', { volume: (mode === 'middle' ? 0.4 + 0.3 * tension : 1) * vol, pan: loserSide });
               }
               // [fight v5] the one gold moves off the board's stroke onto the verdict's hairlines
               if (fullVerdict) arrow.ink(false, 120);
@@ -2175,6 +2473,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             },
             onPair: (k, attackerWins) => {
               if (!fullVerdict || gen !== syncGen) return;
+              mark(`pair${k}`);
               if (k >= pairs - 1) {
                 finish();
               } else {
@@ -2204,6 +2503,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         }
         lastPairKey = key;
         lastRollEnd = performance.now();
+        mark('rollEnd');
         // Decided: the gold leaves the board (Roll / Move / the track takes it back).
         if (last) arrow.ink(false, 240);
         if (last) {
@@ -2225,6 +2525,20 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
       case 'territoryConquered': {
         const to = e.to;
+        // [v6] the decisive-moment grammar (feel.md row 12): a human's dice took it. The board holds for a beat
+        // (FIGHT.HIT_STOP, the score ducked, nothing new sounds), then the camera pushes in 2–3 % and the flood
+        // bursts from the impact point with the stroke. Never for an AI's readable beat (no AI turn waits), never
+        // under reduced motion. A tap during it skips it like any motion; it is not part of the roll's budget.
+        const decisive = style === 'full' && !!decisiveAt && decisiveAt.to === to && performance.now() - decisiveAt.t < 2000;
+        decisiveAt = null;
+        if (decisive && !reduced && !anim.instant && !run.skipped) {
+          audio?.hush?.(Math.max(0, anim.scale(FIGHT.HIT_STOP) - 15));
+          hitStops.push(Math.round(performance.now()));
+          mark('hitstop');
+          if (hitStops.length > 50) hitStops.shift();
+          await anim.wait(FIGHT.HIT_STOP, run);
+          pushIn();
+        }
         lastConquered = to;
         lastConquestFrom = e.from;
         lastConquestAt = performance.now();
@@ -2234,18 +2548,34 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         overlay.hideBadge(to);
         tokens.setArmies(to, 0, 'out', null, e.from);
         tokens.setColor(to, tileRgb(lastState, e.player), undefined, pal(e.player)?.emblem ?? null); // v6-board: emblem
-        // A5: a human's territory falling is the sting (the dry brush snap), whoever took it.
-        const somber = o.sting ?? isHuman(prevOwner);
-        sfx('conquer', { volume: isHuman(e.player) || isHuman(prevOwner) ? 1 : 0.5, pan: panOf(to), variant: somber ? 'somber' : undefined });
+        // [v6] (feel.md row 14) two layers: the taker's bright stroke on every capture, and under it, only when the
+        // victim is a human seat, the torn/somber snap, panned to the victim's land. (v5 played the loser's sting for
+        // every human-vs-human capture, the taker's own included.)
+        const victimHuman = o.sting ?? isHuman(prevOwner);
+        const takerHuman = isHuman(e.player);
+        sfx('conquer', takerHuman ? { volume: 1, pan: panOf(to) } : { volume: victimHuman ? 0.8 : 0.5, distance: 0.6, pan: panOf(to) });
+        if (victimHuman) sfx('conquer', { variant: 'somber', volume: takerHuman ? 0.55 : 1, pan: panOf(to) });
         // [board-pieces v4] the readable beat's verdict flood (650) and the tier band, when the controller sends one
         const ms = tierMs(style === 'brief' ? 250 : style === 'readable' ? READABLE.FLOOD : 600, o.tier);
         noteMotion(ms);
         if (style === 'readable' && readableBeat) readableBeat.conquered = true;
         // A human's territory falling: the rim tears (docs/INK.md A5).
-        const torn = (o.sting ?? isHuman(prevOwner)) && style !== 'brief';
-        const f = flood(e.from, to, e.player, ms, null, torn).then(() => {
+        mark('conquer');
+        const torn = victimHuman && style !== 'brief';
+        // [v6] the wet front moves with the sound: a fast start and a long soak (outQuart), not v5's slow-in
+        // inOutCubic that left the cue ~200 ms ahead of anything visible (feel.md row 13).
+        const f = flood(e.from, to, e.player, ms, null, torn, ease.outQuart).then(() => {
           if (gen === syncGen) continents.refresh(owners, lastState, false);
         });
+        // [v6] a continent completed fires its sweep at the conquest, not after the occupy move (row 18)
+        const cont = MAP.territories[to]?.continent;
+        if (cont && MAP.territoryIds.every((id) => MAP.territories[id].continent !== cont || owners[id] === e.player)) {
+          sweptAt.set(cont, e.player);
+          if (gen === syncGen) {
+            continents.refresh(owners, lastState, false);
+            void continents.sweep(cont, lastState, e.player, null);
+          }
+        }
         // The march starts +150 ms into the flood (full) / +100 ms into the flip (brief); the rest of
         // the color change keeps running while the token moves.
         void f;
@@ -2305,6 +2635,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           armies[to] = toN;
           tokens.setArmies(to, toN, 'land', run);
           refreshBadge(to, false);
+          // [v6] (feel.md row 15) the arrival has a sound: a stone set down, heavier with the count that arrived.
+          // (If the pieces' own landing hook plays it too, the cue's 60 ms retrigger gap keeps it to one.)
+          if (!run.skipped) sfx('land', { volume: vol * (0.55 + 0.45 * Math.min(1, count / 10)), pan: panOf(to) });
         }
         if (e.reason === 'occupy' && arrowSource === 'event') {
           arrow.hide();
@@ -2316,17 +2649,38 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
       case 'continentGained': {
         continents.refresh(owners, lastState, false);
+        // [v6] already swept at the conquest that completed it: nothing waits here
+        if (sweptAt.get(e.continent) === e.player) {
+          sweptAt.delete(e.continent);
+          return;
+        }
         await continents.sweep(e.continent, lastState, e.player, run);
         return;
       }
 
       case 'continentLost': {
         continents.refresh(owners, lastState, false);
+        // [v6] (feel.md row 19) a broken continent is not silent and not dead time: the old holder's coasts dim from
+        // the broken territory outward over the event's own 300 ms, and the hand-damped bowl sounds far off when no
+        // human lost it (the controller plays it, near, for a human seat: BoardView.setAudio ownership).
+        const broken = lastConquered && MAP.territories[lastConquered]?.continent === e.continent ? lastConquered : null;
+        const ids = MAP.territoryIds.filter((id) => MAP.territories[id].continent === e.continent && owners[id] === e.player);
+        if (!isHuman(e.player)) sfx('continent', { variant: 'somber', distance: 0.85, volume: 0.6, pan: broken ? panOf(broken) : 0 });
+        if (!reduced && !anim.instant && ids.length) {
+          const o0 = broken ? tiles.get(broken).anchor : tiles.get(ids[0]).anchor;
+          const d = ids.map((id) => Math.hypot(tiles.get(id).anchor[0] - o0[0], tiles.get(id).anchor[1] - o0[1]));
+          const dMax = Math.max(1, ...d);
+          ids.forEach((id, i) => {
+            const t = tiles.get(id);
+            void anim.wait(200 * (d[i] / dMax), null).then(() => drain(t));
+          });
+        }
         await anim.wait(300, run);
         return;
       }
 
       case 'playerEliminated': {
+        // [v6] the knockout is decisive too: the push holds through the sweep (the hit-stop was the conquest's)
         // The sweep is the knockout's sting: torn and dark for a human seat, a plain deep sweep for an AI.
         await elimSweep(lastConquered, lastConquestFrom, e.by, run, o.sting ?? isHuman(e.player));
         return;
@@ -2338,8 +2692,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           arrowSource = null;
         }
         hideTray(200);
-        // The winner's ink stays; every other wash dries back to paper. No wave, no orbit, no table.
-        await victoryDry(e.winner, run);
+        // The winner's ink stays; every other wash dries back to paper. [v6] (feel.md row 25) and the winner's own
+        // land answers in one wave: their coasts brighten and their washes lift, outward from the last capture, so
+        // the board itself says who won. ≤ 1.2 s; the victory sheet may rise as it ends.
+        await Promise.all([winnerWave(e.winner, run), victoryDry(e.winner, run)]);
         return;
       }
     }
@@ -2553,6 +2909,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let lastAmbientDraw = 0;
   let lastEveAt = performance.now();
   const IDLE_SLOW_MS = 180000;
+  const IDLE_MID_MS = 20000;
   const ambientOn = () => ambientWanted && !reduced;
   const noteInput = () => {
     lastInputAt = performance.now();
@@ -2707,11 +3064,18 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     rig.safeLeft = parseFloat(cs.paddingLeft) || 0;
     rig.safeRight = parseFloat(cs.paddingRight) || 0;
   };
+  let lastDpr = window.devicePixelRatio || 1;
   const resize = () => {
     const w = Math.max(1, container.clientWidth);
     const h = Math.max(1, container.clientHeight);
     clientOrigin();
     invalidate();
+    // [v6] (tech finding 8) re-read devicePixelRatio: a window dragged between a 1× and a 2× monitor, or browser zoom
+    const dpr = window.devicePixelRatio || 1;
+    if (dpr !== lastDpr) {
+      lastDpr = dpr;
+      applyPixelRatio();
+    }
     if (w === W && h === H) return;
     W = w;
     H = h;
@@ -2976,7 +3340,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     rig.recomputeHome();
     fitCaps();
     tokens.markDirty();
-    rig.zoomInMax = compact ? clamp(40 / Math.max(1, homePxPerUnit()), 3.5, 9) : 3.5;
+    // [v6] (mobile finding 6) phones: pinch stops at 2.5× home (v5 allowed up to 9×: pieces over the HUD, aliasing)
+    rig.zoomInMax = compact ? 2.5 : 3.5;
     continents.fitLabels(rig.homeCamera(), W);
     // The coastline breath reaches 0.5 CSS px at the home zoom (A1): in ink texels at this scale.
     const pxPerTexel = (homePxPerUnit() * G.width) / Math.max(1, shared.uInkSize.value.x);
@@ -3102,8 +3467,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         drewLast = false;
         return;
       }
-      // Only the calm is moving: ≤ 30 fps (≤ 24 on phones; two-thirds of that when idle for long).
-      const cap = (phoneGpu ? 24 : 30) * (idleSlow ? 0.67 : 1);
+      // Only the calm is moving: ≤ 30 fps (≤ 24 on phones). [v6] (tech finding 4, the battery) untouched for 20 s it
+      // steps to two-thirds, and after IDLE_SLOW_MS to 40 %: the drift is slow clouds, it still moves every frame
+      // it draws, it just draws fewer of them.
+      const idleMid = now - lastInputAt > IDLE_MID_MS;
+      const cap = (phoneGpu ? 24 : 30) * (idleSlow ? 0.4 : idleMid ? 0.67 : 1);
       if (now - lastAmbientDraw < 1000 / cap - 4) return;
     }
     lastAmbientDraw = now;
@@ -3414,9 +3782,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const h = hl ?? {};
       const prev = lastHl;
       lastHl = { ...h, targets: h.targets ? [...h.targets] : undefined };
+      targetSet = new Set(h.targets ?? []);
       shared.uFront.value = frontForce ?? (h.frontLines === false ? 0 : 1); // [place v5] front lines, on unless asked off
       applyHighlights(h, prev);
       applyPieceMarks(h, prev);
+      phoneFrameFight(h);
     },
     onTerritoryClick(cb) {
       clickCbs.push(cb);
@@ -3466,6 +3836,26 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     leanBack() {
       leanBack();
       invalidate();
+    },
+    // [v6] board answers for the controller: an invalid tap shivers its tile; an AI's stroke is preceded by a glint
+    shiver(territory: TerritoryId) {
+      shiver(territory);
+    },
+    glintSource(territory: TerritoryId) {
+      glintSource(territory);
+    },
+    // [v6] portrait phones: the whole-world overview (mobile finding 3)
+    setOverview(on: boolean) {
+      setOverview(on);
+    },
+    isOverview() {
+      return rig.mode === 'fill' && rig.overview;
+    },
+    onOverviewChange(cb: (on: boolean) => void) {
+      overviewCbs.push(cb);
+    },
+    duckAudio(ms?: number) {
+      audio?.duck?.(ms ?? 120);
     },
     onFightCount(cb: (c: { from: TerritoryId; to: TerritoryId; attackerArmies: number; defenderArmies: number }) => void) {
       fightCountCbs.push(cb);
@@ -3644,6 +4034,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     rig,
     anim,
     tray,
+    hitStops,
+    /** [v6] last roll's pour/verdict marks (performance.now()): land of each die, each pair, the hush. */
+    get fightMarks() {
+      return fightMarks;
+    },
     owners,
     armies,
     tiles,

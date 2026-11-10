@@ -173,7 +173,9 @@ export class CameraRig {
       if (home.dist > free.dist * 1.03) home = free;
     }
     this.fitDist = home.dist;
-    if (this.mode === 'fill') home = this.solveFill(home);
+    this.fitPose = { ...home };
+    // [v6] portrait phones: the whole-world overview is the fit pose (every territory on screen); off, the fill
+    if (this.mode === 'fill' && !this.overview) home = this.solveFill(home);
     return home;
   }
 
@@ -351,6 +353,13 @@ export class CameraRig {
   private focusDefault = 0;
   /** The whole-land fit pose, solved alongside a fill home (the zoom-out limit in fill mode). */
   private fitDist = 0;
+  /** [v6] The whole-land fit (before the portrait fill crops it): the overview's home. */
+  fitPose: Pose | null = null;
+  /**
+   * [v6] (mobile finding 3) Portrait phones: true = home is the whole-world overview instead of the fill. Only
+   * meaningful in 'fill' mode; index.ts toggles it (setOverview / a double-tap on open water) and eases home.
+   */
+  overview = false;
 
   private toWorldPts(ring: [number, number][]): number[][] {
     // board coords (origin bottom-left, +y north) → world (x east, z south), at the tile tops
@@ -1004,9 +1013,11 @@ export class CameraRig {
         this.cur[key] = Math.abs(d) < 1e-4 ? this.goal[key] : this.cur[key] + d * k;
       }
     }
-    // [fight v5] the fight's lean rides on top of the pose (never written into cur/goal/home)
-    if (this.lean.x || this.lean.z) this.place({ ...this.cur, tx: this.cur.tx + this.lean.x, tz: this.cur.tz + this.lean.z });
-    else this.place(this.cur);
+    // [fight v5] the fight's lean rides on top of the pose (never written into cur/goal/home); [v6] so does the
+    // decisive roll's push (a 2–3 % dolly toward the impact)
+    if (this.lean.x || this.lean.z || this.push) {
+      this.place({ ...this.cur, tx: this.cur.tx + this.lean.x, tz: this.cur.tz + this.lean.z, dist: this.cur.dist * (1 - this.push) });
+    } else this.place(this.cur);
   }
 
   // --- [fight v5] the fight's lean (PROPOSAL §4 A "anticipation") --------------------------------
@@ -1016,6 +1027,23 @@ export class CameraRig {
    * ignore it, so a lean can't move the home view or light the Reset view pill.
    */
   lean = { x: 0, z: 0 };
+  /**
+   * [v6] The decisive moment's push: the camera dollies in by this fraction of its distance (0.02–0.03), eased
+   * in and back by index.ts. Like the lean it is never part of the pose, so it never counts as a camera move,
+   * never moves home and never lights Reset view.
+   */
+  push = 0;
+  /** [v6] A copy of the live camera placed at `pose` (for predicting where a framing puts things on screen). */
+  cameraAt(pose: Pose): THREE.PerspectiveCamera {
+    const cam = this.camera.clone();
+    this.place(pose, cam);
+    return cam;
+  }
+  /** [v6] Pan limits applied to a pose in place (public for index.ts's phone fight framing). */
+  clampPose(p: Pose): Pose {
+    this.clampPan(p);
+    return p;
+  }
   /** A copy of the live camera placed as it will be with `lean` = (dx, dz) (for predicting the leaned frame). */
   leanedCamera(dx: number, dz: number): THREE.PerspectiveCamera {
     const cam = this.camera.clone();

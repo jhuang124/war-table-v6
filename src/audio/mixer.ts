@@ -34,6 +34,8 @@ export const LOOKAHEAD = 0.006;
 export const CUE_GAP = 0.07;
 /** Music duck recovery time constant: back to ~95% in 2–3 s. */
 const DUCK_RECOVER_TAU = 0.8;
+/** v6: duckAll's depth for the effects already sounding (the knockout's hush instead of a hard cut). */
+export const DUCK_ALL_DB = -14;
 /** Default verdict beat (INK: 250 ms of silence between the dice settling and the verdict). */
 export const HUSH_DEFAULT = 0.25;
 
@@ -424,6 +426,26 @@ export class Mixer {
     this.diceSeq = { last: -Infinity, index: -1 };
     this.liveStroke?.kill(at);
     this.liveStroke = null;
+  }
+
+  /**
+   * v6 (feel.md row 20): duck, don't cut. Every voice sounding (or scheduled) ramps to DUCK_ALL_DB over `sec` and
+   * keeps its own tail; the score dips with it and recovers on its own. New sounds after `at` are untouched (the
+   * knockout's bowl plays at full level over the ducked conquest).
+   */
+  duckAll(at: number, sec = 0.12): void {
+    const s = clamp(sec, 0.02, 1);
+    const k = dbToGain(DUCK_ALL_DB);
+    for (const v of this.voices) {
+      const g = v.gain.gain;
+      // scheduled but not started yet: a later cue, left as it is
+      if (v.start >= at) continue;
+      const cur = g.value;
+      g.cancelScheduledValues(at);
+      g.setValueAtTime(cur, at);
+      g.linearRampToValueAtTime(cur * k, at + s);
+    }
+    this.duck(at, s + 0.5, 8);
   }
 
   /** The verdict beat: nothing new starts in [at, at+sec), and the score dips under it. */

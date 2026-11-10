@@ -27,7 +27,7 @@ import { bone, diceLand } from './bone';
 import { continent, eliminated, victory } from './bowl';
 import { conquer, hit, march, place, pour, splash, unplace, whoosh } from './brush';
 import { cardDraw, cardTrade, glint, ripple, sheet, tick, turnStart, uiClick, uiError, uiHover } from './paper';
-import { cupSet, cupSlide, diceShake, rattle } from './wood';
+import { cupSet, cupSlide, diceShake, land, rattle } from './wood';
 
 /** A felt note (the score's piano colour, softened): fundamental and two soft overtones. */
 const FELT: [number, number, number][] = [
@@ -129,6 +129,11 @@ export const SFX: Record<SfxName, SfxMeta> = {
     fn: cupSet, label: 'Cup set down (in key)', group: 'Board', tier: 'board', trimDb: 1.6, wet: 0.16,
     maxDur: 1.45, maxVoices: 1, minGapMs: 300, priority: 4, tone: CUP_TONE,
   },
+  // v6 (feel.md row 15): arriving armies set down on their stone (the board's landing hook)
+  land: {
+    fn: land, label: 'Stone set down (armies arrive)', group: 'Board', tier: 'board', trimDb: 6.6, wet: 0.07,
+    maxDur: 0.26, maxVoices: 3, minGapMs: 60, priority: 2, densityDb: 2, densityMaxDb: 5,
+  },
   diceShake: {
     fn: diceShake, label: 'Wood cup shake', group: 'Battle', tier: 'board', trimDb: -4.0, wet: 0.06,
     maxDur: 0.25, maxVoices: 1, minGapMs: 80, priority: 3, duration: [0.06, 1.5, 0.15], duckDb: 3,
@@ -158,6 +163,8 @@ export const SFX: Record<SfxName, SfxMeta> = {
   conquer: {
     fn: conquer, label: 'Ink flood (somber: the snap)', group: 'Stingers', tier: 'cue', trimDb: -1.1, wet: 0.12,
     maxDur: 0.79, maxVoices: 2, minGapMs: 150, priority: 4, duckDb: 5, densityDb: 3, densityMaxDb: 6,
+    // v6 (feel.md row 14): the victim's somber snap layers under the taker's bright stroke in the same instant
+    textureVariants: ['somber'], textureGapMs: 0,
   },
   cardDraw: {
     fn: cardDraw, label: 'Sheet drawn', group: 'Cards', tier: 'board', trimDb: -0.2, wet: 0.05,
