@@ -216,7 +216,7 @@ describe('new game screen memory', () => {
     expect(ng.seats.map((s) => s.name)).toEqual(['John', 'Slate', 'Ochre']);
     expect(ng.length).toBe('quick');
     expect(ng.setup).toBe('placeOwn');
-    expect(ng.summary).toBe('Territories dealt at random · you place your own armies · first to 26 territories, or most after 12 rounds');
+    expect(ng.summary).toBe('Territories dealt at random · you place your own armies · first to 26 territories, or most after 8 rounds');
   });
 });
 

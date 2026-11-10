@@ -2,7 +2,18 @@
 // presets with honest time estimates, the summary line, and the problems that block Start.
 
 import { PLAYER_COLORS, PLAYER_COLOR_IDS, DEFAULT_SEAT_COLORS } from '../shared/palette';
-import { isPersonality, mapDefOf, minStartingArmies, PERSONALITY_IDS, targetTerritories, type AiPersonality, type GameConfig, type PlayerColorId } from '../engine';
+import {
+  isPersonality,
+  mapDefOf,
+  minStartingArmies,
+  PERSONALITY_IDS,
+  targetTerritories,
+  type AiDifficulty,
+  type AiPersonality,
+  type CapitalsRule,
+  type GameConfig,
+  type PlayerColorId,
+} from '../engine';
 import { DEFAULT_MAP_ID, isHiddenMap, mapIdOf, packData } from '../map/packs';
 import { SEP } from './copy';
 import type { HouseRulesDraft, LengthPreset, NewGameVM, SeatDraft, SetupPreset } from './viewModel';
@@ -11,6 +22,41 @@ import type { HouseRulesDraft, LengthPreset, NewGameVM, SeatDraft, SetupPreset }
 export function usesNeutral(d: NewGameDraft): boolean {
   return d.seats.length === 2 && d.house.neutral === true;
 }
+
+/**
+ * v6 "difficulty as an honest dial": what each level means. Easy and Normal play the difficulty's AI as is; Hard
+ * plays the Hard AI and gets extra armies at the start of each of its turns (PlayerConfig.handicap). Measured
+ * (scripts/v6/exp-difficulty.ts: one AI at the level among three Normal AIs, personalities at random, Evening 70%,
+ * n=1000 each; fair share 25%): Easy 6.2% · Normal 27.7% · Hard as the AI alone 34.7% · Hard +1 43.9% ·
+ * Hard +2 55.1%. Hard is +1 (target 40–50%).
+ */
+export const DIFFICULTY_HANDICAP: Record<AiDifficulty, number> = { easy: 0, normal: 0, hard: 1 };
+
+/** Plain words for the seat picker: the level and what it means, one line each. */
+export const DIFFICULTY_LABELS: Record<AiDifficulty, string> = {
+  easy: 'Easy · plays loose',
+  normal: 'Normal',
+  hard: 'Hard · +1 army a turn',
+};
+
+/**
+ * v6 lengths: Full conquest is an advanced option (the UI lists it under More). Quick and Evening are the two
+ * headline lengths.
+ */
+export const ADVANCED_LENGTHS: readonly LengthPreset[] = ['full'];
+export function isAdvancedLength(id: LengthPreset): boolean {
+  return ADVANCED_LENGTHS.includes(id);
+}
+
+/**
+ * v6 capitals (config.capitals): each seat's capital pays its holder +1 army a turn. On by default at 3–4 seats,
+ * where it passed every gate against the same build without it (scripts/v6/exp-capitals.ts, n=800 per row:
+ * median rounds 10→10 / 13→13, first mover 32.5→33.5% / 20.6→19.5%, round-5 leader wins 57.9→54.5% /
+ * 39.9→41.3%, none over before round 4). Off at 2 seats: the first mover went 47.6→55.1% (fails ±3). +2 and
+ * "holding every capital wins" failed (docs/SPEC.md §11.9).
+ */
+export const CAPITALS_RULE: CapitalsRule = { bonus: 1 };
+export const CAPITALS_ON_BY_SEATS: Record<number, boolean> = { 2: false, 3: true, 4: true };
 
 export interface NewGameDraft {
   seats: SeatDraft[];
@@ -133,7 +179,7 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
     setup: o.setup === 'placeOwn' ? 'placeOwn' : 'quickDeal',
     v51: true,
     house: {
-      draft: !!o.house?.draft,
+      draft: false, // v6: Draft setup is no longer offered
       cardBonus: o.house?.cardBonus === 'fixed' ? 'fixed' : 'progressive',
       fortifyRule: o.house?.fortifyRule === 'adjacent' ? 'adjacent' : 'connected',
       setupBatch:
@@ -161,7 +207,8 @@ export function lengthRules(
   const two = players === 2 && !neutral;
   switch (length) {
     case 'quick':
-      return { dominationPercent: two ? 75 : 60, turnLimit: 12 };
+      // v6: 60% with an 8-round cap (most territories at the cap); 2 players keep 75% (60% is reached in round 1).
+      return { dominationPercent: two ? 75 : 60, turnLimit: 8 };
     case 'evening':
       return { dominationPercent: two ? 80 : 70, turnLimit: null };
     case 'full':
@@ -208,15 +255,19 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
     kind: s.kind,
     ...(s.kind === 'ai' ? { difficulty: s.difficulty } : {}),
     ...(s.kind === 'ai' && drawn[i] ? { personality: drawn[i] } : {}),
+    // v6: Hard means extra armies a turn (DIFFICULTY_HANDICAP).
+    ...(s.kind === 'ai' && DIFFICULTY_HANDICAP[s.difficulty] > 0 ? { handicap: DIFFICULTY_HANDICAP[s.difficulty] } : {}),
   }));
   const diplomacy = d.house.truces !== false && trucesApply(players);
   return {
     ...(neutral ? { neutral: true } : {}),
     ...(diplomacy ? { diplomacy: true } : {}),
     ...(d.house.missions === true && missionsApply(d) ? { missions: true } : {}),
+    ...(CAPITALS_ON_BY_SEATS[n] ? { capitals: { ...CAPITALS_RULE } } : {}),
     mapId: mapIdOf(d.mapId ?? null),
     players,
-    setupMode: d.house.draft ? 'draft' : 'random',
+    // v6: Draft setup is no longer offered (it pushed the 2-player first mover to ~90%); territories are dealt.
+    setupMode: 'random',
     initialPlacement: d.setup === 'placeOwn' ? 'manual' : 'auto',
     setupBatch: d.house.setupBatch === 'auto' ? autoSetupBatchFor(n, d.mapId) : d.house.setupBatch,
     cardBonus: d.house.cardBonus,
@@ -227,16 +278,44 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
   };
 }
 
-// Rounds until someone first holds X% of the board: [median, p90] for normal AIs, from
-// `npm run sim -- 200` (SPEC §11.1; 100 games per player count, 2026-09-27; re-checked 2026-09-30,
-// unchanged). Re-run and paste if the AI or the rules change.
-const ROUNDS: Record<number, Record<number, [number, number]>> = {
-  2: { 60: [1, 3], 70: [4, 7], 75: [4, 8], 80: [5, 9], 100: [8, 11] },
-  3: { 60: [6, 11], 70: [8, 15], 75: [9, 18], 80: [10, 18], 100: [13, 22] },
-  4: { 60: [8, 14], 70: [11, 19], 75: [12, 21], 80: [13, 26], 100: [15, 31] },
+// v6: rounds until someone first holds X% of the board, measured per map: [median, p90]. The shipped table (seat 0
+// a person who moves first, played by the classic Normal AI; the other seats Normal AIs with random
+// personalities; standing on; quick deal; capitals +1 at 3–4 seats), played to full conquest, n=400 games per row,
+// `npx tsx scripts/v6/rounds.ts 400` (2026-11-10). '2n' = 2 players plus the neutral seat. Re-run and paste if the
+// AI, the rules or a map change. Replaces v5's size scaling of classic's table.
+type RoundsRow = Record<number, [number, number]>;
+const ROUNDS_BY_MAP: Record<string, Record<number | '2n', RoundsRow>> = {
+  'classic': {
+    2: { 60: [1, 2], 70: [5, 8], 75: [5, 9], 80: [6, 9], 100: [8, 12] },
+    3: { 60: [7, 12], 70: [9, 16], 75: [10, 18], 80: [11, 20], 100: [14, 25] },
+    4: { 60: [10, 14], 70: [12, 18], 75: [13, 19], 80: [13, 20], 100: [17, 27] },
+    '2n': { 60: [7, 11], 70: [8, 13], 75: [9, 14], 80: [10, 15], 100: [11, 17] },
+  },
+  'true-world': {
+    2: { 60: [1, 2], 70: [5, 8], 75: [5, 9], 80: [6, 9], 100: [8, 12] },
+    3: { 60: [7, 12], 70: [9, 16], 75: [10, 18], 80: [11, 20], 100: [14, 25] },
+    4: { 60: [10, 14], 70: [12, 18], 75: [13, 19], 80: [13, 20], 100: [17, 27] },
+    '2n': { 60: [7, 11], 70: [8, 13], 75: [9, 14], 80: [10, 15], 100: [11, 17] },
+  },
+  'roman-empire': {
+    2: { 60: [1, 2], 70: [5, 9], 75: [6, 9], 80: [6, 10], 100: [9, 13] },
+    3: { 60: [6, 13], 70: [9, 18], 75: [10, 19], 80: [10, 19], 100: [13, 26] },
+    4: { 60: [10, 15], 70: [12, 18], 75: [12, 19], 80: [13, 21], 100: [16, 27] },
+    '2n': { 60: [6, 9], 70: [8, 11], 75: [8, 12], 80: [9, 13], 100: [10, 15] },
+  },
+  'italian-conquest': {
+    2: { 60: [1, 2], 70: [4, 7], 75: [5, 9], 80: [6, 9], 100: [8, 12] },
+    3: { 60: [6, 11], 70: [9, 16], 75: [9, 17], 80: [10, 19], 100: [13, 23] },
+    4: { 60: [10, 14], 70: [12, 17], 75: [12, 19], 80: [13, 21], 100: [16, 27] },
+    '2n': { 60: [6, 10], 70: [7, 12], 75: [8, 13], 80: [8, 13], 100: [10, 16] },
+  },
+  'modern-boston': {
+    2: { 60: [1, 2], 70: [4, 6], 75: [5, 8], 80: [5, 8], 100: [7, 11] },
+    3: { 60: [5, 9], 70: [7, 13], 75: [7, 14], 80: [8, 14], 100: [11, 18] },
+    4: { 60: [7, 10], 70: [8, 13], 75: [9, 14], 80: [10, 14], 100: [12, 19] },
+    '2n': { 60: [5, 8], 70: [7, 12], 75: [8, 12], 80: [8, 13], 100: [9, 16] },
+  },
 };
-/** 2 players plus the neutral seat (`2p+neutral` line of `npm run sim`, 100 games, 2026-09-30). */
-const ROUNDS_2P_NEUTRAL: Record<number, [number, number]> = { 60: [5, 8], 70: [7, 12], 75: [7, 13], 80: [8, 13], 100: [12, 18] };
 /** Humans attack less eagerly than the sim's AIs, so real games run a few more rounds. */
 const HUMAN_ROUND_FACTOR = 1.3;
 /** Seconds per human turn: UX.md §4.3 puts early turns at 60–90 s; later turns carry more fights. */
@@ -258,25 +337,18 @@ function fmtRange(loMin: number, hiMin: number): string {
   return a === b ? `~${fmt(a)} h` : `~${fmt(a)}–${fmt(b)} h`;
 }
 
-/**
- * v6: the sim tables above were measured on classic's 42 territories. Until `npm run sim -- --map <id>` is
- * rerun per visible map, another board scales the rounds by its size against classic's (fewer territories,
- * fewer rounds to the same share). Classic and True World (42) are unchanged.
- */
-function sizeScale(mapId?: string): number {
-  const size = mapDefOf({ mapId: mapIdOf(mapId ?? null) }).size;
-  const classic = mapDefOf(null).size;
-  return size === classic ? 1 : Math.max(0.3, size / classic);
+/** The measured rounds row for a map and table (an unmeasured map reads classic's). */
+function roundsRow(mapId: string | undefined, n: number, neutral: boolean): RoundsRow {
+  const m = ROUNDS_BY_MAP[mapIdOf(mapId ?? null)] ?? ROUNDS_BY_MAP[DEFAULT_MAP_ID] ?? ROUNDS_BY_MAP.classic;
+  return (neutral ? m['2n'] : m[n]) ?? ROUNDS_BY_MAP.classic[n];
 }
 
 export function lengthEstimate(length: LengthPreset, seats: SeatDraft[], neutral = false, mapId?: string): string {
   const n = Math.min(4, Math.max(2, seats.length));
   const withNeutral = neutral && n === 2;
   const { dominationPercent, turnLimit } = lengthRules(length, n, withNeutral);
-  const table = withNeutral ? ROUNDS_2P_NEUTRAL : ROUNDS[n];
-  const k = sizeScale(mapId);
-  const raw = table[dominationPercent] ?? table[70];
-  const row: [number, number] = [raw[0] * k, raw[1] * k];
+  const table = roundsRow(mapId, n, withNeutral);
+  const row: [number, number] = table[dominationPercent] ?? table[70];
   const humans = seats.filter((s) => s.kind === 'human').length;
   const perRound = humans * HUMAN_TURN_S + (n - humans) * AI_TURN_S;
   const cap = (r: number) => (turnLimit ? Math.min(turnLimit, r) : r);
@@ -312,7 +384,7 @@ export function draftProblems(d: NewGameDraft): string[] {
 export function draftSummary(d: NewGameDraft): string {
   const n = d.seats.length;
   const { dominationPercent, turnLimit } = lengthRules(d.length, n, usesNeutral(d));
-  const deal = d.house.draft ? 'Territories claimed in turn' : 'Territories dealt at random';
+  const deal = 'Territories dealt at random';
   const place = d.setup === 'quickDeal' ? 'armies placed for you' : 'you place your own armies';
   const need = territoriesToWin(dominationPercent, { mapId: mapIdOf(d.mapId ?? null) });
   // v5 G: with Missions on, a secret mission is the other way to win.

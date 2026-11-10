@@ -13,10 +13,11 @@ import type { ContinentInfo, MapDef, TerritoryInfo } from '../mapData';
 import { blitzOdds, winProbability, winProbabilityStopAt } from '../probability';
 import { hashInts, random, type RngHolder } from '../rng';
 import { missionGoal, type MissionGoal } from '../missions';
-import { fortifyPath, fortifyTargets, mapOf, reinforcementsFor } from '../rules';
+import { attacksLocked, fortifyPath, fortifyTargets, mapOf, reinforcementsFor } from '../rules';
 import { UNCLAIMED, type Action, type AiPersonality, type ContinentId, type GameState, type Phase, type PlayerId, type TerritoryId, type TerritoryState } from '../types';
 import { isPeace } from '../diplomacy';
 import { standingOf, type Standing } from '../standing';
+import { threatFor } from '../threat';
 import { chooseTruceProposal } from './diplomacy';
 import type { Persona } from './persona';
 import { personaFor, TEMPERAMENTS, type Temperament } from './personality';
@@ -62,6 +63,8 @@ interface Ctx {
   p: Persona;
   rng: RngHolder;
   round: number;
+  /** v6: living seats (not out, not the neutral seat). */
+  alive: number;
   /** Per-player territory count and army totals. */
   terr: number[];
   armies: number[];
@@ -75,6 +78,10 @@ interface Ctx {
   goal: ContinentId;
   /** Opponent we're trying to eliminate this turn (hunt), or -1. */
   prey: PlayerId;
+  /** v6: the seat that can plausibly win on its next turn (threatOf), which we must break, or -1. */
+  danger: PlayerId;
+  /** v6 capitals (config.capitals): whose capital each capital territory is; empty when the rule is off. */
+  caps: Map<TerritoryId, PlayerId>;
   /** Personality knobs; undefined = the classic AI (every personality branch is skipped). */
   pk?: Temperament;
   /**
@@ -93,6 +100,10 @@ interface Ctx {
   grudge: number[];
   /** Personality only: biggest opponent army total (for the opportunist's weak-target pull). */
   maxOppArmies: number;
+  /** v6, personality only: the weakest living opponent by armies (-1 = none). */
+  weakest: PlayerId;
+  /** v6, personality only: opponents someone other than us took territory from this round. */
+  bleeding: Set<PlayerId>;
   /** v5 G: our secret mission's current goal (config.missions), or null. */
   mg: MissionGoal | null;
   /** v5 G: how hard this seat pursues `mg` (its personality's weight for that kind of mission). */
@@ -121,6 +132,7 @@ function mkRng(s: GameState, me: PlayerId): RngHolder {
 
 const NO_SEATS: Set<PlayerId> = new Set();
 const NO_GUARD: Map<PlayerId, number> = new Map();
+const NO_CAPS: Map<TerritoryId, PlayerId> = new Map();
 
 function buildCtx(s: GameState, me: PlayerId): Ctx {
   const diff = s.players[me].difficulty ?? 'normal';
@@ -192,6 +204,7 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     p,
     rng: mkRng(s, me),
     round: s.round,
+    alive: s.players.filter((pl) => !pl.eliminated && !pl.neutral).length,
     terr,
     armies,
     income,
@@ -201,12 +214,16 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     desire,
     goal,
     prey: -1,
+    danger: -1,
+    caps: NO_CAPS,
     guard: NO_GUARD,
     stand: [],
     allyFoes: NO_SEATS,
     pending: NO_SEATS,
     grudge: [],
     maxOppArmies: 1,
+    weakest: -1,
+    bleeding: NO_SEATS,
     mg: null,
     mw: 0,
     mCont: new Set(),
@@ -248,8 +265,21 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     }
     c.grudge = s.players.map((pl) => Math.min(4, s.players[me].grudges?.[pl.id] ?? 0));
     for (const pl of s.players) if (pl.id !== me && !pl.eliminated && !pl.neutral) c.maxOppArmies = Math.max(c.maxOppArmies, armies[pl.id]);
+    if (c.pk.focus > 0) {
+      c.bleeding = new Set();
+      for (const pl of s.players) {
+        if (pl.id === me || pl.eliminated || pl.neutral) continue;
+        if (c.weakest < 0 || armies[pl.id] < armies[c.weakest]) c.weakest = pl.id;
+        for (const [k, v] of Object.entries(pl.lastTakenBy ?? {})) if (Number(k) !== me && v && v.round >= s.round) c.bleeding.add(pl.id);
+      }
+    }
   }
   if (p.hunt && !s.phase.kind.startsWith('setup')) c.prey = findPrey(c, huntExtra(c));
+  if (s.config.capitals) {
+    c.caps = new Map();
+    for (const pl of s.players) if (pl.capital) c.caps.set(pl.capital, pl.id);
+  }
+  if (p.stopWeight > 0 && s.round > 0 && !s.phase.kind.startsWith('setup')) c.danger = findDanger(c);
   if (s.config.missions) applyMission(c);
   return c;
 }
@@ -315,6 +345,25 @@ function missionValue(c: Ctx, n: TerritoryId): number {
       return v;
     }
   }
+}
+
+/**
+ * v6: the opponent that can plausibly win on its next turn (fewest territories still needed first). Not when we
+ * can win first ourselves, and only a seat we can reach (one of its territories borders ours).
+ */
+function findDanger(c: Ctx): PlayerId {
+  const s = c.s;
+  let best = -1;
+  let bestNeed = Infinity;
+  for (const pl of s.players) {
+    if (pl.id === c.me || pl.eliminated || pl.neutral) continue;
+    const t = threatFor(s, pl.id);
+    if (!t.canWinNext || t.need >= bestNeed) continue;
+    if (!c.ids.some((x) => s.territories[x].owner === pl.id && c.adj[x].some((n) => s.territories[n].owner === c.me))) continue;
+    best = pl.id;
+    bestNeed = t.need;
+  }
+  return best;
 }
 
 /** A neighbouring stack's weight as a threat: a truce partner's or an ally's counts for less (personality only). */
@@ -436,17 +485,46 @@ function targetValue(c: Ctx, n: TerritoryId): number {
     if (vt <= 4 && !victim.neutral) v += (c.p.elimWeight * (1 + victim.cards.length * 1.2)) / vt;
     if (x.owner === c.leader) v += c.p.leaderWeight;
     if (x.owner === c.prey) v += 4 + victim.cards.length * 1.5;
+    // v6: a seat that can win next turn is the only target that matters; a third seat's buffer can wait.
+    if (c.danger >= 0) v = x.owner === c.danger ? v + c.p.stopWeight : v * 0.5;
     if (c.pk) {
       v += c.pk.grudgeWeight * (c.grudge[x.owner] ?? 0);
       if (c.pk.weakBias > 0 && !victim.neutral) v += c.pk.weakBias * 0.6 * (1 - c.armies[x.owner] / c.maxOppArmies);
       if (!victim.neutral) v += standingPull(c, x.owner);
+      // v6 Opportunist: the weakest seat and whoever is already bleeding; everyone else is left alone.
+      if (c.pk.focus > 0 && !victim.neutral) v += x.owner === c.weakest || c.bleeding.has(x.owner) ? c.pk.focus : -c.pk.focus;
     }
   }
   // Turtle: wandering off costs, and costs more once the turn's card is in hand.
   if (c.pk && c.pk.homeBias > 0 && cont !== c.goal && c.mineIn[cont] * 2 < info.territories.length && !c.mCont.has(cont))
     v -= c.pk.homeBias * (s.conqueredThisTurn ? 1.6 : 1);
   if (c.mg) v += missionValue(c, n);
+  if (c.caps.size) v += capitalValue(c, n);
   return v;
+}
+
+/**
+ * v6 capitals: what taking `n` is worth as a capital. Its income for as long as we hold it, more for our own
+ * (we lose its income and someone else gains it), and with holdAllWins, more the closer it brings us to all of them.
+ */
+function capitalValue(c: Ctx, n: TerritoryId): number {
+  const of = c.caps.get(n);
+  if (of === undefined) return 0;
+  const rule = c.s.config.capitals!;
+  let v = 1 + rule.bonus * 1.2;
+  if (of === c.me) v += 2 + rule.bonus;
+  if (rule.holdAllWins) {
+    let held = 0;
+    for (const t of c.caps.keys()) if (c.s.territories[t].owner === c.me) held++;
+    v += 2 + (4 * held) / Math.max(1, c.caps.size - 1);
+    if (held === c.caps.size - 1) v += 20; // the last one wins the game
+  }
+  return v;
+}
+
+/** v6 capitals: our own capital, when we hold it (defended like a continent border). */
+function ownCapital(c: Ctx, t: TerritoryId): boolean {
+  return c.caps.get(t) === c.me && c.s.territories[t].owner === c.me;
 }
 
 /**
@@ -627,9 +705,11 @@ function choosePlacement(c: Ctx, remaining: number, placedSoFar: number, kind: '
     let bestRaw = 0;
     for (const t of borders) {
       const cont = c.tinfo[t].continent;
-      if (c.owner[cont] !== c.me) continue;
+      const cap = ownCapital(c, t);
+      if (c.owner[cont] !== c.me && !cap) continue;
       const want = garrisonFor(c, t, remaining);
-      const need = (want - s.territories[t].armies) * (1 + c.conts[cont].bonus / 10);
+      const worth = (c.owner[cont] === c.me ? c.conts[cont].bonus : 0) + (cap ? 3 + c.s.config.capitals!.bonus * 2 : 0);
+      const need = (want - s.territories[t].armies) * (1 + worth / 10);
       if (need > bestNeed) {
         bestNeed = need;
         bestT = t;
@@ -740,10 +820,11 @@ interface AttackPlan {
 }
 
 function reserveFor(c: Ctx, from: TerritoryId, to: TerritoryId): number {
-  if (!c.p.keepReserve) return 1;
+  const cap = c.caps.size > 0 && ownCapital(c, from);
+  if (!c.p.keepReserve && !cap) return 1;
   const a = c.s.territories[from].armies;
   const cont = c.tinfo[from].continent;
-  if (c.owner[cont] !== c.me) return 1;
+  if (c.owner[cont] !== c.me && !cap) return 1;
   const other = maxThreat(c, from, to);
   if (other === 0) return 1;
   return Math.max(1, Math.min(a - 2, Math.round(other * 0.6)));
@@ -751,6 +832,7 @@ function reserveFor(c: Ctx, from: TerritoryId, to: TerritoryId): number {
 
 function bestAttack(c: Ctx): AttackPlan | null {
   const s = c.s;
+  if (attacksLocked(s)) return null; // v6: the quiet opening (place and fortify only)
   const thr = threshold(c, c.p.attackThreshold);
   const cardThr = threshold(c, c.p.cardGrabThreshold);
   let best: AttackPlan | null = null;
@@ -763,12 +845,14 @@ function bestAttack(c: Ctx): AttackPlan | null {
       if (fs.armies <= stopAt) continue;
       const p = stopAt > 1 ? winProbabilityStopAt(fs.armies, d, stopAt) : winProbability(fs.armies, d);
       const cardPull = !s.conqueredThisTurn ? 2.2 : 0;
-      const huntThr = s.territories[to].owner === c.prey ? Math.min(thr, 0.42) : thr;
+      const huntThr = s.territories[to].owner === c.prey || s.territories[to].owner === c.danger ? Math.min(thr, 0.42) : thr;
       const needed = !s.conqueredThisTurn ? Math.min(huntThr, cardThr) : huntThr;
-      if (p < needed) continue;
+      // v6 Warlord: a near-even fight against the seat it presses (the spectacle; nobody else gambles).
+      const gamble = p < needed && !!c.pk && c.pk.gambleOdds > 0 && p >= c.pk.gambleOdds && (d === 1 || fs.armies >= 4) && (presses(c, s.territories[to].owner) || (d === 1 && !s.conqueredThisTurn));
+      if (p < needed && !gamble) continue;
       let v = targetValue(c, to) + cardPull;
       // Plain-card grabs only count when they are cheap.
-      if (p < huntThr && !s.conqueredThisTurn) v = cardPull + 0.5;
+      if (p < huntThr && !s.conqueredThisTurn && !gamble) v = cardPull + 0.5;
       const odds = blitzOdds(fs.armies - stopAt + 1, d);
       if (c.p.lookahead > 0 && p >= huntThr) {
         // Where can the surviving stack go next? Follow-up value, discounted by the odds of getting there.
@@ -796,6 +880,9 @@ function bestAttack(c: Ctx): AttackPlan | null {
       }
       score = noisy(c, score);
       if (score <= 0.05) continue;
+      // v6 Turtle: card in hand, it only goes on for the continents it is building (or a very good reason).
+      // A duel (two seats left) has nobody else to wear the leader down, so it fights on.
+      if (c.pk && c.pk.settleBar > 0 && s.conqueredThisTurn && c.alive > 2 && !homeTarget(c, to) && score < c.pk.settleBar) continue;
       const bar = c.guard.get(s.territories[to].owner);
       // A truce holds unless this attack is worth the broken word; peace, an ally and a waiting offer always hold.
       if (bar !== undefined && score < bar) continue;
@@ -803,6 +890,20 @@ function bestAttack(c: Ctx): AttackPlan | null {
     }
   }
   return best;
+}
+
+/** v6 Warlord: the seat it presses: its biggest grudge, a hostile seat, or the table leader. */
+function presses(c: Ctx, o: PlayerId): boolean {
+  if (o < 0 || c.s.players[o]?.neutral) return false;
+  if (o === c.leader) return true;
+  if (c.stand[o] === 'hostile') return true;
+  return (c.grudge[o] ?? 0) >= 0.5;
+}
+
+/** v6 Turtle: a territory in a continent it is building (its goal, one it holds, or a mission continent). */
+function homeTarget(c: Ctx, t: TerritoryId): boolean {
+  const cont = c.tinfo[t].continent;
+  return cont === c.goal || c.owner[cont] === c.me || c.mCont.has(cont) || c.mineIn[cont] * 2 >= c.conts[cont].territories.length;
 }
 
 // ---------------------------------------------------------------------------

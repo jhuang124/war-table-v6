@@ -109,8 +109,8 @@ describe('new game draft → GameConfig', () => {
     expect(c).toMatchObject({ setupMode: 'random', initialPlacement: 'auto', dominationPercent: 70, turnLimit: null, seed: 42 });
   });
   it('length presets, with the 2-player thresholds from the lead notes', () => {
-    expect(lengthRules('quick', 4)).toEqual({ dominationPercent: 60, turnLimit: 12 });
-    expect(lengthRules('quick', 2)).toEqual({ dominationPercent: 75, turnLimit: 12 });
+    expect(lengthRules('quick', 4)).toEqual({ dominationPercent: 60, turnLimit: 8 });
+    expect(lengthRules('quick', 2)).toEqual({ dominationPercent: 75, turnLimit: 8 });
     expect(lengthRules('evening', 3)).toEqual({ dominationPercent: 70, turnLimit: null });
     expect(lengthRules('evening', 2)).toEqual({ dominationPercent: 80, turnLimit: null });
     expect(lengthRules('full', 2)).toEqual({ dominationPercent: 100, turnLimit: null });
@@ -138,7 +138,7 @@ describe('new game draft → GameConfig', () => {
     d = patchSeat(d, 0, { color: 'emerald' });
     expect(d.seats[0].name).toBe('John');
     const three = { ...defaultDraft(), seats: defaultDraft().seats.slice(0, 3), length: 'quick' as const };
-    expect(buildNewGameVM(three).summary).toBe('Territories dealt at random · armies placed for you · first to 26 territories, or most after 12 rounds');
+    expect(buildNewGameVM(three).summary).toBe('Territories dealt at random · armies placed for you · first to 26 territories, or most after 8 rounds');
     expect(addSeat(three).seats[3].color).toBe('emerald');
   });
   it('length options carry honest estimates', () => {

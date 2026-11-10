@@ -52,6 +52,14 @@ export {
   isBorder,
   enemyNeighborArmies,
   alivePlayers,
+  handicapOf,
+  OPENING_NO_ATTACK,
+  quietOpeningOn,
+  attacksLocked,
+  pickCapital,
+  capitalOf,
+  capitalHolders,
+  capitalsWinner,
 } from './rules';
 export {
   buildDeck,
@@ -110,6 +118,8 @@ export {
   STANDINGS,
   PEACE_ROUNDS,
   PEACE_ASK_ROUNDS,
+  PEACE_ONCE,
   WARY_ACCEPT,
   type Standing,
 } from './standing';
+export { threatOf, threatFor, type SeatThreat } from './threat';

@@ -345,7 +345,7 @@ describe('truces', () => {
   it('truces, offers and grudges survive a save/restore, and play continues identically', () => {
     // v5.1: truces are AI-AI understandings; drive personality games until one holds.
     let s = createGame(aiConfig(['normal', 'normal', 'normal', 'normal'], { seed: 5169 })).state;
-    for (let seed = 5169; seed < 5175 && !s.diplomacy?.truces.length; seed++) {
+    for (let seed = 5169; seed < 5260 && !s.diplomacy?.truces.length; seed++) {
       const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed });
       cfg.players.forEach((p, k) => (p.personality = PERS[(k + seed) % 3]));
       s = createGame(cfg).state;
@@ -374,9 +374,9 @@ describe('truces', () => {
 
   it('AI↔AI truces happen in personality games without any human input', () => {
     // v5.1: understandings come from standing (two AIs at ally), so they are rarer than v4's offers: about one
-    // 4-seat game in ten (npm run sim, Standing section). Seeds 5169–5174 hold the first one.
+    // 4-seat game in ten (npm run sim, Standing section). v6 personalities moved them: seeds from 5169 are searched until one holds.
     let seen = 0;
-    for (let seed = 5169; seed < 5175 && seen === 0; seed++) {
+    for (let seed = 5169; seed < 5260 && seen === 0; seed++) {
       const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed });
       cfg.players.forEach((p, k) => (p.personality = PERS[(k + seed) % 3]));
       const g = playAi(cfg);

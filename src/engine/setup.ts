@@ -94,6 +94,8 @@ export function sanitizeConfig(config: GameConfig): GameConfig {
     kind: p.kind,
     ...(p.kind === 'ai' ? { difficulty: p.difficulty ?? 'normal' } : p.difficulty ? { difficulty: p.difficulty } : {}),
     ...(isPersonality(p.personality) ? { personality: p.personality } : {}),
+    // v6: a per-turn head start, only when set (0..10).
+    ...(typeof p.handicap === 'number' && Number.isFinite(p.handicap) && p.handicap >= 1 ? { handicap: Math.min(10, Math.floor(p.handicap)) } : {}),
   })) as PlayerConfig[];
   const out: GameConfig = {
     players,
@@ -115,6 +117,15 @@ export function sanitizeConfig(config: GameConfig): GameConfig {
   if (config.missions === true && (n >= 3 || out.neutral)) out.missions = true;
   // Map packs (docs/MAPS.md): keep the map so the save carries it; an unknown id plays classic.
   if (typeof config.mapId === 'string' && config.mapId) out.mapId = mapIdOf(config.mapId);
+  // v6: the quiet opening (only when set: unset = on for 2 players), a pinned first seat, capitals.
+  if (typeof config.quietOpening === 'boolean') out.quietOpening = config.quietOpening;
+  if (typeof config.firstPlayer === 'number' && Number.isInteger(config.firstPlayer) && config.firstPlayer >= 0 && config.firstPlayer < n)
+    out.firstPlayer = config.firstPlayer;
+  const cap = config.capitals;
+  if (cap && typeof cap === 'object') {
+    const bonus = Math.min(5, Math.max(0, int(cap.bonus, 0)));
+    out.capitals = { bonus, ...(cap.holdAllWins === true ? { holdAllWins: true } : {}) };
+  }
   return out;
 }
 
@@ -192,7 +203,11 @@ export function createGame(inputConfig: GameConfig): { state: GameState; events:
   s.id = id;
 
   s.deck = shuffleInPlace(s, buildDeck(def));
-  s.firstPlayer = randInt(s, n);
+  // v6: a person moves first. One draw either way: among the human seats when there are any (all-AI tables are
+  // drawn exactly as before), or the pinned config.firstPlayer (the draw is still taken, so the deal is the same).
+  const humans = config.players.flatMap((p, i) => (p.kind === 'human' ? [i] : []));
+  const draw = randInt(s, humans.length > 0 ? humans.length : n);
+  s.firstPlayer = config.firstPlayer ?? (humans.length > 0 ? humans[draw] : draw);
   s.currentPlayer = s.firstPlayer;
   emit(d, { type: 'gameStarted', firstPlayer: s.firstPlayer });
 

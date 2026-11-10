@@ -85,12 +85,15 @@ import { missionComplete } from './missions';
 import { random, rollDie } from './rng';
 import { clearHardened, noteStanding, peaceAnswer, peaceAskBlock, PEACE_ROUNDS } from './standing';
 import {
+  attacksLocked,
+  capitalOf,
   checkWinner,
   defendDiceFor,
   fortifyPath,
   isTerritoryId,
   mapOf,
   maxAttackDice,
+  OPENING_NO_ATTACK,
   territoryCount,
   territoryName,
 } from './rules';
@@ -291,6 +294,8 @@ function validateInner(state: GameState, action: Action): string | null {
     case 'attack':
     case 'blitz': {
       if (ph.kind !== 'attack') return phaseBlurb(state);
+      // v6: the quiet opening (2 players): the first player's opening turn is place and fortify only.
+      if (attacksLocked(state)) return OPENING_NO_ATTACK;
       const e = t(a.from, 'territory to attack from') ?? t(a.to, 'territory to attack');
       if (e) return e;
       if (!own(a.from)) return `${territoryName(a.from, state)} isn't yours.`;
@@ -682,7 +687,9 @@ function conquer(d: Draft, from: TerritoryId, to: TerritoryId, lastDice: number)
   s.territories[to] = { owner: attacker, armies: 0 };
   s.conqueredThisTurn = true;
   s.players[attacker].stats.territoriesConquered++;
-  emit(d, { type: 'territoryConquered', player: attacker, from, to, previousOwner: prev });
+  // v6 capitals: name whose capital fell (the attacker retaking its own counts too).
+  const cap = s.config.capitals ? capitalOf(s, to) : -1;
+  emit(d, { type: 'territoryConquered', player: attacker, from, to, previousOwner: prev, ...(cap >= 0 ? { capitalOf: cap } : {}) });
   updatePeak(d, attacker);
   if (prev >= 0) {
     addGrudge(s, prev, attacker, GRUDGE_TAKEN);
@@ -747,7 +754,7 @@ function completeOccupy(
 
   const win = checkWinner(s);
   if (win) {
-    gameOver(d, win.winner, win.reason);
+    gameOver(d, win.winner, win.reason, undefined, win.by);
     return;
   }
   if (missionWin(d)) return;

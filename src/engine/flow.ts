@@ -5,7 +5,7 @@ import { decayGrudges, REBUFF_ROUNDS } from './diplomacy';
 import { missionComplete, missionHeadline, missionText } from './missions';
 import { random, shuffleInPlace } from './rng';
 import { refreshStandings } from './standing';
-import { mapOf, reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
+import { mapOf, pickCapital, reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
 import type { GameEvent, GameState, Phase, PlayerId, TerritoryId, TruceOffer } from './types';
 
 export interface Draft {
@@ -46,8 +46,9 @@ export function gameOver(
   winner: PlayerId,
   reason: 'domination' | 'percent' | 'turnLimit',
   mission?: string,
+  by?: 'capitals',
 ): void {
-  const extra = mission !== undefined ? { by: 'mission' as const, mission } : {};
+  const extra = mission !== undefined ? { by: 'mission' as const, mission } : by ? { by } : {};
   d.s.phase = { kind: 'game-over', winner, reason, ...extra };
   recordTimeline(d); // final sample so the victory chart ends on the final board
   emit(d, { type: 'gameOver', winner, reason, ...extra });
@@ -168,6 +169,14 @@ export function startMainGame(d: Draft): void {
   for (const p of s.players) p.setupArmies = 0;
   s.round = 1;
   s.turn = 0;
+  // v6 capitals: each seat's capital from the board as play starts (no rng draw, so seeded games are unchanged).
+  if (s.config.capitals) {
+    for (const p of s.players) {
+      if (p.neutral) continue;
+      const c = pickCapital(s, p.id);
+      if (c) p.capital = c;
+    }
+  }
   recordTimeline(d);
   refreshStandings(s, true); // v5.1: the baseline bands, without events
   startTurn(d, s.firstPlayer);

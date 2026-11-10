@@ -37,6 +37,11 @@ export interface Persona {
   hunt: boolean;
   /** Size border garrisons so the strongest neighbor's blitz odds fall below this (0 = rough rule). */
   deter: number;
+  /**
+   * v6: when another seat can plausibly win on its next turn (threatOf), target value added to that seat's
+   * territories; everyone else's are discounted so nobody spends the turn on a third seat's buffer. 0 = ignore.
+   */
+  stopWeight: number;
 }
 
 export const PERSONAS: Record<AiDifficulty, Persona> = {
@@ -58,6 +63,7 @@ export const PERSONAS: Record<AiDifficulty, Persona> = {
     lookahead: 0,
     hunt: false,
     deter: 0,
+    stopWeight: 0,
   },
   normal: {
     attackThreshold: 0.6,
@@ -77,6 +83,7 @@ export const PERSONAS: Record<AiDifficulty, Persona> = {
     lookahead: 0,
     hunt: false,
     deter: 0,
+    stopWeight: 3,
   },
   hard: {
     attackThreshold: 0.58,
@@ -96,5 +103,6 @@ export const PERSONAS: Record<AiDifficulty, Persona> = {
     lookahead: 4,
     hunt: true,
     deter: 0.3,
+    stopWeight: 4,
   },
 };

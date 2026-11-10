@@ -274,7 +274,7 @@ describe('human input', () => {
   async function humanReinforce(seed = 21) {
     const kit = make();
     const { c } = kit;
-    c.hooks.newGame({ players: [{ name: 'John', color: 'crimson', kind: 'human' }, { name: 'Sam', color: 'cobalt', kind: 'human' }], seed, dominationPercent: 80, turnLimit: null });
+    c.hooks.newGame({ players: [{ name: 'John', color: 'crimson', kind: 'human' }, { name: 'Sam', color: 'cobalt', kind: 'human' }], seed, dominationPercent: 80, turnLimit: null, quietOpening: false });
     await until(() => c.hooks.isIdle(), 20_000);
     return kit;
   }
