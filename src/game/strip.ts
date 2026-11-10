@@ -4,7 +4,9 @@
 // fortify `Move N · end turn`, which says so). Pure: built from the displayed state + the selection.
 
 import {
-  attackSources,
+  attackSources as engineAttackSources,
+  attacksLocked,
+  OPENING_NO_ATTACK,
   mapDefOf,
   attackTargets,
   fortifySources,
@@ -17,6 +19,36 @@ import {
 import { Click, SEP, armies, cName, click, movesIn, pName, pct, poss, seatRef, tName } from './copy';
 import { bestSet, oddsWord } from './helpers';
 import type { ButtonId, ButtonVM, CountVM, StripVM, TrackSegId, TrackSegVM, TrackVM } from './viewModel';
+import { PLAYER_COLORS } from '../shared/palette';
+
+/**
+ * Where `me` can attack from now: none on the quiet opening (v6, 2 players: the first player's opening turn is
+ * place and fortify only, engine `attacksLocked`).
+ */
+export function attackSources(s: GameState, me: number): TerritoryId[] {
+  return attacksLocked(s) ? [] : engineAttackSources(s, me);
+}
+
+/** v6: the quiet opening's line, said wherever the turn would otherwise point at Attack. */
+export const QUIET_LINE = `No attacks on the opening turn${SEP}fortify or end your turn`;
+
+/**
+ * v6 "a person moves first": a human's first turn names their colour, so they know which ink is theirs.
+ * 'You're Vermilion · place 3 armies'; a seat with its own name: 'John · you're Vermilion · place 3 armies'. On the
+ * quiet opening it says so up front: '… · place 3 · no attacks this turn'.
+ */
+export function firstTurnLine(s: GameState, me: number, remaining: number): string {
+  const p = s.players[me];
+  const colour = (PLAYER_COLORS as Record<string, { name: string } | undefined>)[p.color]?.name ?? p.name;
+  const who = p.name.trim().toLowerCase() === colour.toLowerCase() ? `You're ${colour}` : `${p.name}${SEP}you're ${colour}`;
+  return attacksLocked(s) ? `${who}${SEP}place ${remaining}${SEP}no attacks this turn` : `${who}${SEP}place ${armies(remaining)}`;
+}
+
+/** A human's very first turn of the game, before they have placed anything: round 1, a fresh Place step. */
+export function isFirstTurn(s: GameState): boolean {
+  const ph = s.phase;
+  return s.round === 1 && ph.kind === 'reinforce' && !ph.midTurn && !Object.values(ph.placed).some((v) => (v ?? 0) > 0);
+}
 
 export interface Placement {
   t: TerritoryId;
@@ -105,6 +137,8 @@ export function trackLockReason(s: GameState, sel: Sel, seg: TrackSegId): string
     }
     case 'reinforce':
       if (seg === 'place') return null;
+      // v6: the quiet opening: Attack never opens this turn (the track goes Place → Fortify → End).
+      if (seg === 'attack' && attacksLocked(s)) return OPENING_NO_ATTACK.replace(/\.$/, '');
       if (ph.mustTrade) return 'Trade cards first';
       return ph.remaining > 0 ? `Place your ${armies(ph.remaining)} first` : null;
     case 'occupy':
@@ -141,8 +175,11 @@ export function recommendedSeg(s: GameState, sel: Sel): TrackSegId | null {
       return placeLeft(s, sel) === 0 ? 'done' : null;
     case 'reinforce':
       if (ph.mustTrade || ph.remaining > 0) return null;
+      // v6: the quiet opening points past Attack: Fortify when a move is possible, else End turn.
+      if (attacksLocked(s)) return canFortifyAny(s) ? 'fortify' : 'endTurn';
       return attackSources(s, me).length > 0 ? 'attack' : 'endTurn';
     case 'attack':
+      if (attacksLocked(s)) return canFortifyAny(s) ? 'fortify' : 'endTurn';
       return attackSources(s, me).length === 0 ? 'endTurn' : null;
     case 'fortify':
       return 'endTurn';
@@ -367,6 +404,7 @@ export function buildStrip(inp: StripInput): StripVM {
       const cards = hand.length > 0 ? btn('cards', `Cards ${hand.length}`) : null;
       const secondaries = [...(cards ? [cards] : []), ...(undo ? [undo] : [])];
       if (ph.remaining === 0) {
+        if (attacksLocked(s)) return make('place', QUIET_LINE, { buttons: secondaries });
         const next = attackSources(s, me).length > 0 ? (ph.midTurn ? 'keep attacking' : 'Attack is next') : 'end your turn';
         return make('place', `All placed${SEP}${next}`, { buttons: secondaries });
       }
@@ -378,7 +416,11 @@ export function buildStrip(inp: StripInput): StripVM {
           buttons: [...(second ? [second] : []), btn('place', `Place ${n}`, true)],
         });
       }
-      const line = placedAny ? `Place ${ph.remaining} more${SEP}${click()} a territory` : `Place ${armies(ph.remaining)}${SEP}${click()} a territory`;
+      const line = placedAny
+        ? `Place ${ph.remaining} more${SEP}${click()} a territory`
+        : isFirstTurn(s)
+          ? firstTurnLine(s, me, ph.remaining)
+          : `Place ${armies(ph.remaining)}${SEP}${click()} a territory`;
       return make('place', line, { buttons: secondaries });
     }
     case 'attack': {
@@ -389,6 +431,7 @@ export function buildStrip(inp: StripInput): StripVM {
           buttons: [btn('roll', 'Roll'), btn('blitz', 'Blitz', true)],
         });
       }
+      if (attacksLocked(s)) return make('attack', QUIET_LINE);
       if (sel.selected && s.territories[sel.selected].owner === me) return make('attack', `Attack from ${tName(sel.selected)}${SEP}${click()} an enemy`);
       if (attackSources(s, me).length === 0) return make('attack', `No attacks left${SEP}end your turn`);
       return make('attack', `${Click()} an enemy territory to attack`);

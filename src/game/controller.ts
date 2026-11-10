@@ -14,8 +14,8 @@ import {
   UNCLAIMED,
   mapDefOf,
   applyAction,
-  attackSources,
   attackTargets,
+  attacksLocked,
   chooseAiAction,
   cloneState,
   createGame,
@@ -40,6 +40,7 @@ import {
   standingOf,
   standingReason,
   canAskPeace,
+  threatOf,
   type Standing,
   type Action,
   type AiPersonality,
@@ -58,7 +59,7 @@ import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { attackLine, attackOdds, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
+import { attackLine, attackOdds, attackSources, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
 import {
   buildReplay,
   emptyStory,
@@ -74,7 +75,7 @@ import {
   type StoryLedger,
 } from './story';
 import { Voices, type VoiceEntry, type VoiceKind, type VoiceVars } from './voice';
-import { SEP, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setCopyMap, setTouchCopy, tName, upper } from './copy';
+import { SEP, threatLine, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setCopyMap, setTouchCopy, tName, upper } from './copy';
 import { eventTier } from './timingModel';
 import { createHaptics, type Haptics } from './haptics';
 import { applyEventToDisplay, isBlocking } from './display';
@@ -571,6 +572,9 @@ function isAttackAction(a: Action): a is Extract<Action, { type: 'attack' | 'bli
 
 /** One boot-time instruction across a reload (a game on another map; a Continue onto another map). */
 const BOOT_KEY = STORAGE_KEYS.boot;
+
+/** v6: an AI seat's difficulty as one word on its seat card. */
+const DIFFICULTY_WORD: Record<AiDifficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
 type BootFile = { v: 1; start?: GameConfig; resume?: boolean };
 
 /** Diplomacy events: HUD only (display.ts lists them non-blocking; the board is never asked to play them). */
@@ -1711,9 +1715,10 @@ class Controller {
         // v5 B: the evening deepens with the rounds (score and paper from one place).
         if (ev.round !== d.round) this.setEvening(ev.round);
         let recap: string | null = null;
-        if (this.meta && this.isHumanSeat(ev.player) && ev.round >= 2) {
-          // The grudge line stays in the Ledger; v4 the receipt replaces it on screen.
-          recap = buildRecap(this.meta.recap[ev.player], d);
+        if (this.meta && this.isHumanSeat(ev.player)) {
+          // The grudge line stays in the Ledger; v4 the receipt replaces it on screen. v6: built (and the ledger
+          // cleared) on every human turn start, round 1 too, and never naming a territory already taken back.
+          recap = buildRecap(this.meta.recap[ev.player], d, ev.player);
           delete this.meta.recap[ev.player];
           if (recap) this.log('recap', ev.player, recap, ev.round);
         }
@@ -2963,7 +2968,8 @@ class Controller {
         this.autoAttackTimer = this.timer(fire, 60);
         return;
       }
-      this.goTo('attack');
+      // v6: on the quiet opening the marker skips Attack (locked this turn) and lands on Fortify.
+      this.goTo(attacksLocked(s) ? 'fortify' : 'attack');
       this.saveMeta();
       this.invalidate();
     };
@@ -4412,10 +4418,20 @@ class Controller {
     const reader = this.meta ? this.grudgeReader(d) : null;
     const ticks = reader !== null ? grudgeTicks(this.story(), reader) : {};
     const said = this.voices.bySeat;
+    // v6: how close each seat is to winning (engine threatOf), said only when it is worth saying.
+    const threats = new Map<PlayerId, string | null>();
+    if (d.round > 0 && d.phase.kind !== 'game-over' && d.phase.kind !== 'setup-place' && d.phase.kind !== 'setup-claim') {
+      try {
+        for (const t of threatOf(d)) threats.set(t.player, threatLine(t));
+      } catch {
+        /* a display state mid-event the estimate can't read: no line this frame */
+      }
+    }
     return d.players.map((p) => ({
       grudgeTicks: p.id === reader ? 0 : (ticks[p.id] ?? 0),
       voiceLine: said[p.id] ?? null,
       ...this.seatExtras(d, p.id),
+      ...this.seatV6(d, p.id, threats.get(p.id) ?? null),
       ...this.standingFields(d, p.id, sr),
       seat: seatRef(d, p.id),
       current: p.id === d.currentPlayer && d.phase.kind !== 'game-over',
@@ -4443,6 +4459,25 @@ class Controller {
       const top = p.eliminated ? null : grudgesOf(d, id)[0];
       const at = top && top.value >= 2 ? d.players[top.seat] : null;
       if (at && !at.eliminated && !at.neutral) out.grudge = seatRef(d, top!.seat);
+    }
+    return out;
+  }
+
+  /**
+   * v6 seat card fields: the threat line, an AI's difficulty as a word, its capital (capitals on) and, on the seat
+   * whose live human turn it is, its secret mission.
+   */
+  private seatV6(d: GameState, id: PlayerId, threat: string | null): Pick<SeatChipVM, 'threat' | 'difficulty' | 'capital' | 'mission'> {
+    const p = d.players[id];
+    const out: Pick<SeatChipVM, 'threat' | 'difficulty' | 'capital' | 'mission'> = {};
+    if (threat && !p.eliminated && !p.neutral) out.threat = threat;
+    const diff = d.config.players[id]?.difficulty;
+    if (p.kind === 'ai' && !p.neutral && diff) out.difficulty = DIFFICULTY_WORD[diff];
+    if (d.config.capitals && p.capital && !p.neutral) out.capital = { territory: tName(p.capital, d), held: d.territories[p.capital]?.owner === id };
+    const s = this.state;
+    if (s && s.config.missions && id === s.currentPlayer && id === d.currentPlayer && this.interactive()) {
+      const m = this.missionFor(s, id);
+      if (m) out.mission = m;
     }
     return out;
   }

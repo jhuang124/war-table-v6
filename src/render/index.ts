@@ -2265,7 +2265,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         {
           const prev = turnPlayer;
           turnPlayer = e.player;
-          if (prev !== null && prev !== e.player && isHuman(prev) && isHuman(e.player)) seatPulse(e.player);
+          // v6 integration: and on a game's very first turn (a person moves first), so they see which colour is theirs.
+          if (isHuman(e.player) && (e.turn === 1 || (prev !== null && prev !== e.player && isHuman(prev)))) seatPulse(e.player);
         }
         if (arrowSource === 'event') {
           arrow.hide();

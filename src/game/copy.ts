@@ -114,3 +114,15 @@ export function pct(p: number): number {
   if (p <= 0) return 0;
   return Math.min(99, Math.max(1, Math.round(p * 100)));
 }
+
+/**
+ * v6 "the end, seen coming" (engine threatOf): the seat's threat line, only when it is worth saying. A seat that can
+ * plausibly win on its next turn: 'needs 8 · holds a set worth 30' (the set only when it holds one). A seat a few
+ * territories from the goal: 'needs 2'. Otherwise null.
+ */
+export function threatLine(t: { need: number; set: number | null; canWinNext: boolean }): string | null {
+  if (t.need <= 0) return null;
+  const set = t.set ? `holds a set worth ${t.set}` : null;
+  if (t.canWinNext) return [`needs ${t.need}`, ...(set ? [set] : [])].join(SEP);
+  return t.need <= 3 ? `needs ${t.need}` : null;
+}

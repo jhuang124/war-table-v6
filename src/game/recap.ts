@@ -39,10 +39,12 @@ export const RECAP_MAX = 60;
  * what: 'Sam took Ural and Siberia from you' · 'Sam took Ural, Priya took Peru' · when names don't fit in
  * 60 characters, 'Sam took 4 of yours' / 'Sam and Priya took 5 of yours'. null when nothing was lost.
  */
-export function buildRecap(entry: RecapEntry | undefined, state: GameState): string | null {
+export function buildRecap(entry: RecapEntry | undefined, state: GameState, reader?: PlayerId): string | null {
   if (!entry) return null;
+  // v6: never claim a loss the reader has already taken back.
+  const still = (t: TerritoryId) => reader === undefined || state.territories[t]?.owner !== reader;
   const attackers = Object.entries(entry.lost)
-    .map(([a, ts]) => ({ a: Number(a), ts: [...new Set(ts)] }))
+    .map(([a, ts]) => ({ a: Number(a), ts: [...new Set(ts)].filter(still) }))
     .filter((x) => x.ts.length > 0)
     .sort((x, y) => y.ts.length - x.ts.length || x.a - y.a);
   if (!attackers.length) return null;

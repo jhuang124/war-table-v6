@@ -288,7 +288,8 @@ describe('human input', () => {
     const [a, b] = own;
     const before = { a: s.territories[a].armies, b: s.territories[b].armies };
     const remaining = (s.phase as { remaining: number }).remaining;
-    expect(c.hooks.ui().line).toBe(`Place ${remaining} armies · click a territory`);
+    // v6: a human's first turn of the game names their colour.
+    expect(c.hooks.ui().line).toBe(s.round === 1 ? `${s.players[me].name} · you're Slate · place ${remaining} armies` : `Place ${remaining} armies · click a territory`);
     fb.click(a);
     await vi.advanceTimersByTimeAsync(500);
     let u = c.hooks.ui();
