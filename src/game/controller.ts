@@ -1280,7 +1280,11 @@ class Controller {
     this.clearSave();
     this.titleNote = "That saved game couldn't be opened, so it was cleared";
     try {
+      // The board may have drawn part of the bad save: back to empty paper, as at boot.
       this.board.skipAnimations();
+      const { state: blank } = createGame({ ...draftToConfig(defaultDraft(), 1), mapId: this.bootMap });
+      for (const t of mapDefOf(blank.config).territoryIds) blank.territories[t] = { owner: UNCLAIMED, armies: 0 };
+      this.board.syncState(blank);
       this.board.setAttractMode(true);
     } catch {
       /* the board keeps whatever it last drew */
