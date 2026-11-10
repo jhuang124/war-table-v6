@@ -54,7 +54,7 @@ const PIN = `(() => {
   const REAL = 'risk3d.e2e.realtime';
   try { if (sessionStorage.getItem(REAL)) return; } catch { return; }
   try {
-    const k = 'risk3d.settings.v1';
+    const k = 'risk3d.v6.settings';
     const s = JSON.parse(localStorage.getItem(k) || 'null') || {};
     localStorage.setItem(k, JSON.stringify({ ...s, animationSpeed: 0, aiSpeed: 'instant' }));
   } catch {}
@@ -326,8 +326,8 @@ export async function loadScenario(page: Page, s: GameState, opts: { waitIdle?: 
   await page.evaluate(
     ([st, settings]) => {
       localStorage.clear();
-      localStorage.setItem('risk3d.save.v1', JSON.stringify({ v: 1, savedAt: Date.now(), state: st }));
-      if (settings) localStorage.setItem('risk3d.settings.v1', JSON.stringify(settings));
+      localStorage.setItem('risk3d.v6.save', JSON.stringify({ v: 1, savedAt: Date.now(), state: st }));
+      if (settings) localStorage.setItem('risk3d.v6.settings', JSON.stringify(settings));
     },
     [s as unknown as Record<string, unknown>, opts.settings ?? null] as const,
   );

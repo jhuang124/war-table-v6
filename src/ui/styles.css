@@ -667,6 +667,8 @@
 .lk-half:last-child { background: linear-gradient(270deg, rgba(207, 166, 107, 0), var(--gold) 100%); }
 .lk-enso { flex: none; width: 4.25rem; height: 4.25rem; color: var(--gold); }
 .title-menu { margin-top: 2.1rem; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
+/* v6: one plain line under the menu (a save that could not be opened and was cleared). */
+.title-note { margin-top: 1.2rem; font-size: 1rem; color: var(--ivory-70, rgba(236,228,210,0.7)); text-align: center; max-width: 32rem; }
 /* Words: the primary inside a gold brush ring (Continue's save summary under the word, inside the same
    ring); New game / How to play bare ivory 90 %; Settings quiet at 55 %. */
 .title-item { font-size: 1.5rem; font-weight: 500; height: 3rem; color: var(--ivory-90); }

@@ -215,7 +215,7 @@ async function run(dev: DeviceName): Promise<void> {
     s.phase = { kind: 'attack' } as never;
     s.players[1].cards = [{ id: 9, territory: 'siam', symbol: 'cavalry' }];
   }, TWO_HUMANS);
-  await page.evaluate(() => localStorage.removeItem('risk3d.settings.v1'));
+  await page.evaluate(() => localStorage.removeItem('risk3d.v6.settings'));
   await loadScenario(page, two);
   await tapId(page, 'seg-endTurn');
   await page.waitForTimeout(600);

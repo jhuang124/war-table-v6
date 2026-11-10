@@ -5,6 +5,7 @@
 //                       config.mapId, else classic. src/map/index.ts exports its board as BOARD.
 // Rules and topology (no geometry) live in src/map/packs.ts, which the engine reads.
 
+import { STORAGE_KEYS } from '../shared/keys';
 import type { BoardGeometry, SeaLaneGeom, Vec2 } from './types';
 import { DEFAULT_MAP_ID, mapIdOf, packData, packIdOfPath, allPackIds, readMapsFolder, type Globbed } from './packs';
 
@@ -123,7 +124,7 @@ export function anchorClearanceOf(id?: string | null): number {
  *   1. `?map=<id>` when `allowUrl` (dev server and VITE_E2E builds only) and the pack exists;
  *   2. else the saved game's `state.config.mapId` (a save without one = classic);
  *   3. else classic.
- * `save` is the raw risk3d.save.v1 string (src/game/storage.ts), or null.
+ * `save` is the raw risk3d.v6.save string (src/game/storage.ts), or null.
  */
 export function resolveMapId(opts: { search?: string; save?: string | null; allowUrl?: boolean }): string {
   if (opts.allowUrl && opts.search) {
@@ -144,8 +145,8 @@ export function resolveMapId(opts: { search?: string; save?: string | null; allo
   return DEFAULT_MAP_ID;
 }
 
-/** Same key as src/game/storage.ts SAVE_KEY (not imported: src/map stays free of game code). */
-const SAVE_KEY = 'risk3d.save.v1';
+/** Same key as src/game/storage.ts SAVE_KEY (both read src/shared/keys.ts; src/map stays free of game code). */
+const SAVE_KEY = STORAGE_KEYS.save;
 
 let active: string | null = null;
 

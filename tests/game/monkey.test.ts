@@ -143,7 +143,7 @@ export async function monkeyGame(seed: number, opts: { maxFakeMinutes?: number; 
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(R() * xs.length)];
   const mode = opts.mode ?? MODES[seed % MODES.length];
   const kv = memoryKV();
-  kv.set('risk3d.settings.v1', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch', hideCardsBetweenTurns: mode !== '1h3ai' && R() < 0.6 }));
+  kv.set('risk3d.v6.settings', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch', hideCardsBetweenTurns: mode !== '1h3ai' && R() < 0.6 }));
   let fb = monkeyBoard();
   const rafHeld: (() => void)[] = [];
   // A controller that keeps re-arming timers without time passing is a busy loop in a real browser.

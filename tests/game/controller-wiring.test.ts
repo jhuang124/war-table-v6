@@ -98,7 +98,7 @@ describe('settings reach the board and audio', () => {
     expect(rb.last('setReducedMotion')).toBe(true);
     expect(rb.last('setAutoCamera')).toBe(false);
     expect(au.state).toEqual({ volume: 0.3, muted: true, music: true });
-    expect(JSON.parse(kv.get('risk3d.settings.v1')!)).toMatchObject({ textSize: 'tv', showLabels: false, muted: true });
+    expect(JSON.parse(kv.get('risk3d.v6.settings')!)).toMatchObject({ textSize: 'tv', showLabels: false, muted: true });
     expect(c.getViewModel().reducedMotion).toBe(true);
     // A new controller reads them back.
     const rb2 = recordingBoard();
@@ -266,10 +266,10 @@ describe('ink overhaul wiring (docs/INK.md A1, A2, A4, B2.1)', () => {
     expect(rb.last('setAmbient')).toBe(false);
     // An old file's `music: false` was the old default; a v4 file's is a choice.
     const old = memoryKV();
-    old.set('risk3d.settings.v1', JSON.stringify({ v: 3, music: false, sfxVolume: 0.5 }));
+    old.set('risk3d.v6.settings', JSON.stringify({ v: 3, music: false, sfxVolume: 0.5 }));
     expect(createController({ board: recordingBoard().b, audio: spyAudio().a, storage: old, clock, dom: false }).getViewModel().settings.music).toBe(true);
     const chosen = memoryKV();
-    chosen.set('risk3d.settings.v1', JSON.stringify({ v: 4, music: false, ambient: false, musicVolume: 0.2 }));
+    chosen.set('risk3d.v6.settings', JSON.stringify({ v: 4, music: false, ambient: false, musicVolume: 0.2 }));
     const au2 = spyAudio();
     const rb2 = recordingBoard();
     createController({ board: rb2.b, audio: au2.a, storage: chosen, clock, dom: false, prefersReducedMotion: () => false });

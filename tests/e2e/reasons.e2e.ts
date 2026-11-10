@@ -88,7 +88,7 @@ for (const c of cases) {
   }
   const ex = await page.evaluate((t) => window.__risk.explain(t as never), c.click);
   if (!ex.code) {
-    const d = await page.evaluate(() => ({ screen: window.__risk.ui().screen, state: !!window.__risk.getState(), save: !!localStorage.getItem('risk3d.save.v1'), line: window.__risk.ui().line }));
+    const d = await page.evaluate(() => ({ screen: window.__risk.ui().screen, state: !!window.__risk.getState(), save: !!localStorage.getItem('risk3d.v6.save'), line: window.__risk.ui().line }));
     console.log('   diagnostics:', JSON.stringify(d));
   }
   check(ex.ok === false && ex.code === c.code, `${c.code}: explain → ${ex.code} "${ex.text}"`, results);

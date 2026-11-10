@@ -1,12 +1,14 @@
-// Persistence: risk3d.save.v1 (the GameState), risk3d.ui.v1 (UI meta next to the save + the last
-// new-game setup), risk3d.settings.v1. Injectable so the controller runs in Node tests.
+// Persistence: risk3d.v6.save (the GameState), risk3d.v6.ui (UI meta next to the save + the last new-game setup),
+// risk3d.v6.settings. v6: the keys are namespaced per release (src/shared/keys.ts). Injectable so the controller
+// runs in Node tests.
 
 import type { GameState } from '../engine';
+import { STORAGE_KEYS } from '../shared/keys';
 import type { Settings } from './viewModel';
 
-export const SAVE_KEY = 'risk3d.save.v1';
-export const UI_KEY = 'risk3d.ui.v1';
-export const SETTINGS_KEY = 'risk3d.settings.v1';
+export const SAVE_KEY = STORAGE_KEYS.save;
+export const UI_KEY = STORAGE_KEYS.ui;
+export const SETTINGS_KEY = STORAGE_KEYS.settings;
 
 export interface KV {
   get(key: string): string | null;

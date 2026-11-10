@@ -9,6 +9,7 @@
 //        → pump: board.playEvent (blocking events awaited, non-blocking fired) → display delta + HUD
 //        → queue empty: pending click-through inputs run; all settled: syncState, next AI beat.
 
+import { STORAGE_KEYS } from '../shared/keys';
 import {
   UNCLAIMED,
   mapDefOf,
@@ -569,7 +570,7 @@ function isAttackAction(a: Action): a is Extract<Action, { type: 'attack' | 'bli
 // ---------------------------------------------------------------------------
 
 /** One boot-time instruction across a reload (a game on another map; a Continue onto another map). */
-const BOOT_KEY = 'risk3d.boot.v1';
+const BOOT_KEY = STORAGE_KEYS.boot;
 type BootFile = { v: 1; start?: GameConfig; resume?: boolean };
 
 /** Diplomacy events: HUD only (display.ts lists them non-blocking; the board is never asked to play them). */
@@ -747,6 +748,8 @@ class Controller {
   private bannerAfterReceipt: (() => void) | null = null;
   /** The game was just resumed: the next receipt reads 'Since your last turn'. */
   private resumedTitle = false;
+  /** v6: one plain line on the title (a save that couldn't be restored and was cleared). Cleared on the next nav. */
+  private titleNote: string | null = null;
   private idleOn = false;
   private lastActive = 0;
   // v5: the replay, voices, the holding dab, clickables, the camera lean
@@ -1221,7 +1224,40 @@ class Controller {
   private loadSave(): boolean {
     const f = readJson<SaveFile>(this.kv, SAVE_KEY);
     if (!f || !isPlausibleState(f.state) || f.state.phase.kind === 'game-over') return false;
-    const s = f.state;
+    // v6: a save that fails to restore (another build's state, a hand-edited file) must not brick Continue: drop
+    // it, go back to the title and say so in one line. The trial view build catches what only shows on render.
+    try {
+      this.restoreSave(f.state);
+      this.buildVM();
+      return true;
+    } catch (e) {
+      console.warn("[risk] that save couldn't be restored:", e);
+      this.dropBadSave();
+      return false;
+    }
+  }
+
+  /** A save that couldn't be restored: forget it and the half-restored game, back to the title with one line. */
+  private dropBadSave(): void {
+    this.resetGameLocals();
+    this.state = null;
+    this.disp = null;
+    this.meta = null;
+    this.screen = 'title';
+    this.overlay = null;
+    this.victory = null;
+    this.clearSave();
+    this.titleNote = "That saved game couldn't be opened, so it was cleared";
+    try {
+      this.board.skipAnimations();
+      this.board.setAttractMode(true);
+    } catch {
+      /* the board keeps whatever it last drew */
+    }
+    this.invalidate();
+  }
+
+  private restoreSave(s: GameState): void {
     this.resetGameLocals();
     this.state = s;
     setCopyMap(s.config);
@@ -1262,7 +1298,6 @@ class Controller {
     if (s.round > 0) this.openTurnMetric(s.currentPlayer);
     this.invalidate();
     this.afterSettled();
-    return true;
   }
 
   /** Drop a restored selection that no longer makes sense for the state. */
@@ -3628,6 +3663,7 @@ class Controller {
       }
       case 'nav':
         this.endReplay(false);
+        this.titleNote = null;
         this.screen = i.screen;
         this.overlay = null;
         this.board.setAttractMode(true);
@@ -4256,6 +4292,7 @@ class Controller {
       settings: this.settings,
       reducedMotion: this.reducedMotion(),
       save: this.saveSummary,
+      ...(this.titleNote && this.screen === 'title' ? { notice: this.titleNote } : {}),
       newGame: { ...buildNewGameVM(this.draft), ...newGameExtras(this.draft), advancedOpen: this.newGameMore },
       game: this.buildGame(),
       victory: this.victory,

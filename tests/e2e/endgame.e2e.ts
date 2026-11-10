@@ -66,7 +66,7 @@ if (!early) {
   check(/^End the game now\? \w+ wins on territories \(\d+ of 42\)\.$/.test(text ?? ''), `confirm: ${text}`, results);
   await clickBtn(page, 'confirm-yes');
   await page.waitForFunction(() => window.__risk.ui().screen === 'victory', null, { timeout: 10_000 });
-  const save = await page.evaluate(() => localStorage.getItem('risk3d.save.v1'));
+  const save = await page.evaluate(() => localStorage.getItem('risk3d.v6.save'));
   check(!save, 'the save is cleared', results);
 }
 await page.screenshot({ path: `${ART}/endgame-banner.png` });

@@ -1,7 +1,5 @@
 // createBoardView: the painted war table (docs/INK.md). Implements the BoardView contract (./BoardView.ts).
 import * as THREE from 'three';
-import '@fontsource-variable/cormorant-garamond/wght.css';
-import '@fontsource-variable/cormorant-garamond/wght-italic.css';
 import type {
   BoardHighlights,
   BoardStats,

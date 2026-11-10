@@ -19,7 +19,8 @@ Read SOUL.md first, and run its "Before you plan" checklist before you plan, del
   (frame times); both need a server on `RISK_URL`.
 - `npm run typecheck` — tsc
 - `npm run build:map -- --map <id>` / `npm run verify:map -- --map <id>` (or `verify:maps`) — regenerate / check `maps/<id>/board.json` (docs/MAPS.md; classic is hash-pinned)
-- `npm run sim [games]` — AI-vs-AI soak + rounds-to-threshold table (paste into `src/game/presets.ts`)
+- `npm run sim [games]` — AI-vs-AI soak (full-conquest round counts)
+- `npx tsx scripts/v6/rounds.ts [games]` — the per-map rounds-to-threshold table (paste into `ROUNDS_BY_MAP` in `src/game/presets.ts`)
 - `npm run build` — production build to `dist/`
 
 ## Test tiers

@@ -505,7 +505,7 @@ async function continueFromTitle(page: Page): Promise<boolean> {
 async function doReload(bot: Bot, why: string): Promise<string> {
   const page = bot.page;
   const before = await page.evaluate(() => {
-    const raw = localStorage.getItem('risk3d.save.v1');
+    const raw = localStorage.getItem('risk3d.v6.save');
     const s = window.__risk.getState();
     return { save: raw ? JSON.parse(raw).state : null, live: s };
   });
@@ -779,8 +779,8 @@ async function playGame(page: Page, job: Job, worker: number, viaRematch: boolea
   };
   if (!res.ok) {
     const dump = await page.evaluate(() => ({
-      save: localStorage.getItem('risk3d.save.v1'),
-      uiMeta: localStorage.getItem('risk3d.ui.v1'),
+      save: localStorage.getItem('risk3d.v6.save'),
+      uiMeta: localStorage.getItem('risk3d.v6.ui'),
       state: window.__risk.getState(),
       ui: window.__risk.ui(),
       idle: window.__risk.isIdle(),

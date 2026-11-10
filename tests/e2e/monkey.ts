@@ -191,7 +191,7 @@ async function playGame(browser: Browser, seed: number): Promise<Result> {
   if (mode !== '1h3ai') R();
   await page.evaluate(() => {
     localStorage.clear();
-    localStorage.setItem('risk3d.settings.v1', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch' }));
+    localStorage.setItem('risk3d.v6.settings', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch' }));
   });
   await page.reload({ timeout: 120_000 });
   await page.waitForFunction(() => !!window.__risk, null, { timeout: 120_000 });

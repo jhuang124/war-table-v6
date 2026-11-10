@@ -73,6 +73,8 @@ export class TitleScreen {
   private drawn = false;
   private thumb: HTMLCanvasElement;
   private sketch: SaveSketchVM | null | undefined = undefined;
+  /** v6: one plain line under the menu (a save that couldn't be opened and was cleared). */
+  private note: HTMLParagraphElement;
 
   constructor(send: (i: UiIntent) => void) {
     this.el = h('section', 'screen title-screen');
@@ -109,7 +111,10 @@ export class TitleScreen {
     const rules = uiButton('How to play', 'title-item', () => send({ type: 'overlay', overlay: 'rules' }), undefined, 'title-rules');
     const settings = uiButton('Settings', 'title-item quiet', () => send({ type: 'overlay', overlay: 'settings' }), undefined, 'title-settings');
     menu.append(this.ng, this.cont, rules, settings);
-    col.append(lock, menu);
+    this.note = h('p', 'title-note hidden');
+    this.note.dataset.testid = 'title-note';
+    this.note.setAttribute('role', 'status');
+    col.append(lock, menu, this.note);
     this.el.append(h('div', 'title-scrim'), col);
   }
 
@@ -138,6 +143,8 @@ export class TitleScreen {
       primary.after(secondary);
     }
     if (vm.save) setText(this.contSub, vm.save.summary);
+    setText(this.note, vm.notice ?? '');
+    toggle(this.note, 'hidden', !vm.notice);
     const sketch = vm.save?.sketch ?? null;
     if (sketch !== this.sketch) {
       this.sketch = sketch;

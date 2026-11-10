@@ -82,7 +82,7 @@ const hs = scenario({ ural: [0, 5], ukraine: [0, 2] }, { kind: 'attack' }, {
   },
 });
 await loadScenario(page, hs);
-const set0 = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}'));
+const set0 = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.v6.settings') ?? '{}'));
 check(!set0.hideCardsBetweenTurns, `no 'Hide cards between turns' setting in force (${set0.hideCardsBetweenTurns})`, results);
 await page.evaluate(() => {
   const w = window as unknown as { __cover: number };
@@ -126,7 +126,7 @@ let s = await state(page);
 u = await ui(page);
 check(s!.players[0].cards.length === 2 && (s!.phase as { remaining: number }).remaining === 7, `traded: 2 cards left, 7 to place`, results);
 check(s!.territories.ural.armies === 5, '+2 landed on Ural (a traded card shows it)', results);
-const log = await page.evaluate(() => ((JSON.parse(localStorage.getItem('risk3d.ui.v1') ?? '{}').game?.log ?? []) as { text: string }[]).map((l) => l.text));
+const log = await page.evaluate(() => ((JSON.parse(localStorage.getItem('risk3d.v6.ui') ?? '{}').game?.log ?? []) as { text: string }[]).map((l) => l.text));
 check(log.some((t) => t.startsWith('+2 on Ural')), 'the +2 is in the log (no toast)', results);
 check(u.line === 'Place 7 armies · click a territory' && u.buttons.join(' / ') === 'Cards 2', `after the trade: ${u.line} · ${u.buttons.join(' / ')}`, results);
 

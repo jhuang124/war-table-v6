@@ -15,13 +15,14 @@ import type { NameCardVMx } from '../vmx';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
 import { layout, onLayout } from '../layout';
+import { STORAGE_KEYS } from '../../shared/keys';
 
 /** Desktop: the note holds this long after the pointer leaves the land (crossing a strait never blinks it). */
 const DESK_HOLD_MS = 700;
 const DESK_DRY_MS = 360;
 const SLOT_DRY_MS = 120;
 
-const ROTATE_KEY = 'risk3d.rotateHint.v1';
+const ROTATE_KEY = STORAGE_KEYS.rotateHint;
 
 function seen(): boolean {
   try {
@@ -310,7 +311,7 @@ export class NameCard {
   }
 }
 
-const HOME_KEY = 'risk3d.homeHint.v1';
+const HOME_KEY = STORAGE_KEYS.homeHint;
 
 /** Installed (Home Screen / app window): there is nothing to suggest. */
 function standalone(): boolean {

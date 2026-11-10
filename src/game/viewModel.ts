@@ -620,6 +620,8 @@ export interface ViewModel {
   boardLost?: boolean;
   /** Additive (v5.1 E3): the Settings sheet's fold (four things up front, the rest under "More"). */
   settingsGroups?: SettingsGroupsVM;
+  /** Additive (v6): one plain line on the title, e.g. a save that couldn't be restored and was cleared. */
+  notice?: string | null;
 }
 
 export type UiIntent =

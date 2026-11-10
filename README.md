@@ -1,6 +1,6 @@
 # War Table
 
-**Play: https://jhuang124.github.io/war-table/**
+**Play: https://jhuang124.github.io/war-table-v6/**
 
 The classic game of world conquest for 2 to 4 players around one screen — a laptop on the coffee table, a TV, or
 one phone or tablet passed around the table. Any seat can be an AI. The board is an ink painting on indigo paper:
@@ -8,6 +8,27 @@ ivory coastlines, muted washes for each player, brush-drawn soldiers, riders and
 lacquer tray, and one line of plain English that always says what to do next. At rest the board drifts
 and breathes; a soft ambient score plays underneath. No accounts, no server, no online play: everything
 runs in the browser and saves to it.
+
+## What's new in v6
+
+- **The decisive moments land.** Captures, continents, knockouts and the win get weight: the dice verdict
+  arrives as they settle, armies march and land, a continent taken re-inks territory by territory. Routine
+  rolls stay as quick as they were.
+- **Readable from the couch.** The army count is the mark on a bigger stone, continent names take their
+  holder's colour, and the HUD scales with the screen.
+- **A fairer start.** A person always takes the first turn. In a two-player game the first player places
+  and fortifies but doesn't attack on that opening turn (the first mover's edge was 3 games in 4).
+- **Honest difficulty.** Easy, Normal, and Hard · +1 army a turn. The three AI personalities now play
+  differently enough to tell apart.
+- **The end, seen coming.** A seat that could win on its next turn says so under its name ("needs 8 ·
+  holds a set worth 30"), and the AIs turn on it. Peace is scarcer: once a game per AI, one at a time,
+  and never with someone stronger.
+- **Capitals** (a house rule under More, off by default): each seat's capital pays whoever holds it +1 army a
+  turn.
+- **The last minute.** The winner first, a replay any key skips, Rematch always on screen, and honest copy
+  for a called game.
+- **Saves are per version.** v6 keeps its own save and settings, so it can sit beside v5 on the same site; a
+  save that can't be opened is cleared with one line instead of a dead Continue button.
 
 ## Start
 
@@ -37,26 +58,25 @@ plays offline.
   **Blitz** does. A drag that starts anywhere else pans the map as usual.
 - The bottom **dock** is the Turn Track (Place · Attack · Fortify · End), the line, and the buttons,
   in thumb reach, under the gold rule. In portrait it stacks in rows. **Cards N** is your hand.
-- Menu, Settings, Rules, Log, your cards and the hand-off cover open as **sheets from the bottom**:
+- Menu, Settings, Rules, Log and your cards open as **sheets from the bottom**:
   pull one down by its handle (or tap outside it) to close it.
-- **Hide cards between turns** is on by default on phones and tablets: with 2+ humans, the next
-  player sees a "Pass to …" cover before their cards show (pull it down or press the button).
 - Android phones buzz lightly on a select, the dice landing, and a conquest.
 
 ## Playing
 
-**New game.** Name the seats (2–4), pick Human/AI (Easy · Normal · Hard), and click a seat's colour
+**New game.** Name the seats (2–4), pick Human/AI (under More: Easy · Normal · Hard, where Hard gets +1 army
+a turn), and click a seat's colour
 emblem to pick from the six colours (Vermilion, Slate, Ochre, Sage, Wisteria, Plum; the first four
 are the defaults, chosen to stay apart for colour-blind players). Pick a length and a
 setup, then **Start**. The line above Start says exactly what you picked.
 
 | Length | Goal | Estimate |
 |---|---|---|
-| Quick | 60% of the world, or most territories after 12 rounds (2 players: 75%) | shown on the button, from your seats |
+| Quick | 60% of the world, or most territories after 8 rounds (2 players: 75%) | shown on the button, from your seats |
 | Evening (default) | 70% of the world (2 players: 80%) | ″ |
-| Full conquest | every territory | ″ |
+| Full conquest (under More) | every territory | ″ |
 
-The estimates come from 200 simulated games (`npm run sim`) times the measured length of an AI turn
+The estimates come from simulated games per map (`scripts/v6/rounds.ts`, 400 a row) times the measured length of an AI turn
 (about 5 s) and about 80 s per human turn, so a table of four humans sees longer numbers than one human
 against three AIs.
 
@@ -135,7 +155,8 @@ registers it. To add one, follow `docs/MAP-AUTHORING.md` (about an hour for an a
 
 ## House rules (New game → More)
 
-- **Draft territories**: take turns claiming territories instead of a random deal (adds ~10 min).
+- **Capitals** (off by default): each seat gets a capital, its best-connected territory. It pays whoever holds it
+  +1 army a turn, and the line names it when its owner loses it or takes it back.
 - **Card sets**: Growing (4, 6, 8, 10, 12, 15, then +5; the default) or Fixed (4 / 6 / 8 / 10).
 - **Fortify**: along any connected chain of yours (default) or to a neighbour only.
 - **Armies per setup turn** (Place your own): two passes (default), or 3 / 5 / 8 per turn.

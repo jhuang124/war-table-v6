@@ -67,7 +67,7 @@ This file overrides ROUND2/SIMPLIFY/UX where they conflict on touch devices.
 **Tablet**: desktop layout with touch input rules and 44 px targets.
 
 ## 5. Sheets and screens
-- Menu, Settings, Rules, Log, Cards, and the hand-off cover become **bottom sheets** on phones:
+- Menu, Settings, Rules, Log and Cards become **bottom sheets** on phones:
   grab handle, drag-down or tap-scrim to dismiss, spring motion (≈ 280 ms), safe-area padding,
   scrollable content, big 48 px rows. Desktop keeps its current overlays.
 - **Title**: portrait = stacked lockup at top, big full-width `New game` / `Continue` buttons at the
@@ -78,8 +78,8 @@ This file overrides ROUND2/SIMPLIFY/UX where they conflict on touch devices.
   (font-size ≥ 16 px).
 - **Victory**: single column: banner, awards as a horizontal swipe row, chart full width, sticky
   `Rematch`.
-- Hand-off cover **defaults on** for touch devices with 2+ humans (a phone is physically passed
-  around, so hiding cards means something there).
+- There is no hand-off cover and no "hide cards between turns" (both went in v5.1): the turn passes with
+  the one line and the seat ring, and a hand shows only on its owner's own turn.
 
 ## 6. Type, targets, motion
 - Minimum touch target 44×44 pt; 8 pt spacing between targets. Minimum body text 15 px, line 16 px,

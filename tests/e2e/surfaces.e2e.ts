@@ -336,7 +336,7 @@ for (const form of run('4') ? (['1440x900', 'iphone-land'] as const) : []) {
   await page.addInitScript((id) => {
     if (sessionStorage.getItem('surf.revealed')) return;
     sessionStorage.setItem('surf.revealed', '1');
-    const k = 'risk3d.ui.v1';
+    const k = 'risk3d.v6.ui';
     const ui = JSON.parse(localStorage.getItem(k) ?? '{}');
     ui.game = { ...(ui.game ?? {}), id, revealed: [1, 2, 3] };
     localStorage.setItem(k, JSON.stringify(ui));
@@ -440,7 +440,7 @@ if (run('6')) {
   const id0 = (await state(page))!.id;
   await Promise.all([page.waitForEvent('framenavigated', { timeout: 10000 }), clickBtn(page, 'update-ready')]);
   await page.waitForFunction(() => !!window.__risk);
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.save.v1') ?? 'null')?.state?.id ?? null);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.v6.save') ?? 'null')?.state?.id ?? null);
   check(saved === id0 && (await ui(page)).screen === 'title', `a tap saved and reloaded (the save is the same game: ${saved === id0})`, results);
   // off the game: reload at once
   let navigated = false;
