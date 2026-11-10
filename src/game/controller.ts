@@ -4460,6 +4460,9 @@ class Controller {
         : 'Card sets: 3 infantry 4 · 3 cavalry 6 · 3 artillery 8 · one of each 10.',
     );
     lines.push(house.fortifyRule === 'connected' ? 'Fortify: along any chain of your territories.' : 'Fortify: to a neighbor only.');
+    // v6: the capitals house rule, when on.
+    if (s ? !!s.config.capitals : this.draft.house.capitals === true) lines.push(`Capitals: each seat's capital pays whoever holds it +${s?.config.capitals?.bonus ?? 1} a turn.`);
+    if (s && attacksLocked({ ...s, turn: 1, currentPlayer: s.firstPlayer })) lines.push('Opening turn: the first player places and fortifies, no attacks.');
     return lines;
   }
 
