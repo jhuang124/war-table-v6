@@ -507,8 +507,10 @@ describe('banners', () => {
     expect([...kinds].every((k) => k === 'elimination')).toBe(true);
     expect(empty).toBe(0);
     const v = c.getViewModel().victory!;
-    expect(v.title).toMatch(/ holds the world$/);
-    expect(v.subline).toMatch(/^Round \d+( of 12)? · \d+ territories$/);
+    // v6: 'holds the world' only when they hold all of it; a round-limit win says 'wins'.
+    expect(v.title).toMatch(/ (holds the world|wins)$/);
+    expect(/ holds the world$/.test(v.title)).toBe(/ 42 of 42 /.test(v.subline));
+    expect(v.subline).toMatch(/^Round \d+( of 12)? · \d+ of 42 territories$/);
     // The epitaph names who did it: 'AI2 · taken by AI1 · round 9'.
     for (const e of epitaphs) expect(e).toMatch(/^\S+ · taken by \S+ · round \d+$/);
     const out = c.getViewModel().game?.seats.filter((x) => x.eliminated) ?? [];
@@ -530,7 +532,10 @@ describe('end game now', () => {
     c.intent({ type: 'confirm', yes: true });
     const vm = c.getViewModel();
     expect(vm.screen).toBe('victory');
-    expect(vm.victory!.subline).toMatch(/^Called in round \d+ · \d+ territories$/);
+    // v6: honest copy for a called game: 'Ochre leads' · 'Round 14 · 16 of 42 territories' · 'Called in round 14 · …'
+    expect(vm.victory!.title).toMatch(/ leads$/);
+    expect(vm.victory!.subline).toMatch(/^Round \d+ · \d+ of 42 territories$/);
+    expect(vm.victory!.called).toMatch(/^Called in round \d+ · .+ held the most territories$/);
     expect(kv.get(SAVE_KEY)).toBeNull();
     c.dispose();
   });

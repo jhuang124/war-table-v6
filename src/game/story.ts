@@ -119,6 +119,10 @@ export function stoneHistory(l: StoryLedger, s: GameState, t: TerritoryId): stri
 export function holdingBreakdown(b: ReinforcementBreakdown, cards = 0): string {
   const parts = [`${plural(b.territoryCount, 'territory', 'territories')} +${b.base}`];
   for (const c of b.continents) parts.push(`${cName(c.continent)} +${c.bonus}`);
+  // v6: capitals held (config.capitals) and a seat's per-turn head start (Hard), each said plainly.
+  const caps = (b.capitals ?? []).reduce((n, c) => n + c.bonus, 0);
+  if (caps > 0) parts.push(`${(b.capitals?.length ?? 0) > 1 ? 'capitals' : 'capital'} +${caps}`);
+  if ((b.handicap ?? 0) > 0) parts.push(`head start +${b.handicap}`);
   if (cards > 0) parts.push(`cards +${cards}`);
   return parts.join(SEP);
 }

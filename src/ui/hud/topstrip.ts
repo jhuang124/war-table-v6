@@ -160,23 +160,16 @@ class Chip {
     this.grudges = new GrudgeTicks();
     void this.grudges;
     // v5 F7: a mouse over the ring lifts that seat's land on the board (never on touch: no hover there).
-    // v5.1 C: over an AI's ring it also asks for its standing's reason (the controller writes it in the line).
-    let standingShown = false;
+    // v6: the seat card says its standing's reason, so hover no longer writes it into the one line as well.
     this.el.addEventListener('pointerenter', (e) => {
       if (e.pointerType !== 'mouse' || !this.vm) return;
       this.onCard?.(this.vm, this.el);
       send({ type: 'hoverSeat', player: this.vm.seat.id });
-      if (this.vm.standing) {
-        standingShown = true;
-        send({ type: 'seatStanding', player: this.vm.seat.id });
-      }
     });
     this.el.addEventListener('pointerleave', (e) => {
       if (e.pointerType !== 'mouse') return;
       if (document.activeElement !== this.el) this.onCard?.(null, this.el);
       send({ type: 'hoverSeat', player: null });
-      if (standingShown) send({ type: 'seatStanding', player: null });
-      standingShown = false;
     });
     // A long-press (touch) or a 600 ms press (mouse): on an AI seat with a standing, its reason (v5.1 C); on
     // anyone else the secret mission (v5 G; the controller shows it only on that seat's live turn).
@@ -192,7 +185,7 @@ class Chip {
       const standing = !!this.vm.standing;
       window.clearTimeout(pressT);
       pressT = window.setTimeout(() => {
-        // A mouse already has the reason from hover.
+        // A mouse already has the reason on the seat card (hover).
         if (standing && e.pointerType === 'mouse') return;
         pressed = standing ? 'standing' : 'mission';
         this.longPressed = true;

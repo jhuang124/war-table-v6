@@ -573,6 +573,30 @@ function isAttackAction(a: Action): a is Extract<Action, { type: 'attack' | 'bli
 /** One boot-time instruction across a reload (a game on another map; a Continue onto another map). */
 const BOOT_KEY = STORAGE_KEYS.boot;
 
+/**
+ * v6 "peace is scarce": the engine's short reasons ('· once a game', '· one peace at a time') read as one plain
+ * sentence on the line: 'You asked Sage in round 5 · you can ask each AI once a game'.
+ */
+export function plainPeace(text: string): string {
+  return text
+    .replace(/\.$/, '')
+    .replace(/ · once a game$/, ' · you can ask each AI once a game')
+    .replace(/ · one peace at a time$/, ' · you can hold one peace at a time');
+}
+
+/** v6 capitals: how long the fall / retake line holds. */
+const CAPITAL_LINE_MS = 2600;
+
+/**
+ * v6 capitals: the line for a capital changing hands, or null. Only when its own seat loses it ("Ochre's capital
+ * falls · Sage takes Brazil") or takes it back ("Ochre takes back its capital, Brazil").
+ */
+export function capitalLine(d: GameState, of: PlayerId, attacker: PlayerId, previousOwner: PlayerId, t: TerritoryId): string | null {
+  if (of === previousOwner) return `${poss(pName(d, of))} capital falls${SEP}${pName(d, attacker)} takes ${tName(t)}`;
+  if (of === attacker) return `${pName(d, of)} takes back its capital, ${tName(t)}`;
+  return null;
+}
+
 /** v6: an AI seat's difficulty as one word on its seat card. */
 const DIFFICULTY_WORD: Record<AiDifficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
 type BootFile = { v: 1; start?: GameConfig; resume?: boolean };
@@ -754,6 +778,8 @@ class Controller {
   private resumedTitle = false;
   /** v6: one plain line on the title (a save that couldn't be restored and was cleared). Cleared on the next nav. */
   private titleNote: string | null = null;
+  /** v6: the capitals last sent to the board (syncCapitals); '' = never sent. */
+  private capitalsKey = '';
   private idleOn = false;
   private lastActive = 0;
   // v5: the replay, voices, the holding dab, clickables, the camera lean
@@ -1175,6 +1201,7 @@ class Controller {
 
   private resetGameLocals(): void {
     this.epoch++;
+    this.capitalsKey = '';
     this.humanHasPlayed = false;
     this.queue = [];
     this.skipAll = false;
@@ -1801,6 +1828,14 @@ class Controller {
         this.lastConquest = { attacker: ev.player, victim: ev.previousOwner };
         if (ev.previousOwner >= 0) this.lostKeys[ev.previousOwner] = (this.lostKeys[ev.previousOwner] ?? 0) + 1;
         if (e.ai) this.narration = attackTakes(this.narrBegun ?? attackBegins(pName(d, ev.player), tName(ev.to)));
+        // v6 capitals: named only when its own seat loses it, or takes it back (they change hands too often else).
+        if (ev.capitalOf !== undefined && ev.capitalOf >= 0 && d.players[ev.capitalOf] && !this.autoplayOn) {
+          const text = capitalLine(d, ev.capitalOf, ev.player, ev.previousOwner, ev.to);
+          if (text) {
+            this.flashLine(text, 'tap', CAPITAL_LINE_MS);
+            this.log('system', ev.player, text);
+          }
+        }
         // v4 A4: the loser's ring, as the territory falls on the board.
         if (ev.previousOwner >= 0 && this.isHumanSeat(ev.previousOwner) && !this.autoplayOn && this.meta) {
           const rings = (this.meta.rings ??= {});
@@ -1863,6 +1898,8 @@ class Controller {
       case 'cardsTraded': {
         const v = ev.armies;
         if (e.ai) this.narration = `${pName(d, ev.player)} trades cards for +${v}`;
+        // v6: a person's trade that puts +2 on a territory they hold says where (it used to appear silently).
+        else if (ev.bonusTerritory && this.isHumanSeat(ev.player)) this.flashLine(`Cards +${v}${SEP}+2 on ${tName(ev.bonusTerritory)}, your card`, 'tap', 2400);
         // v5 E6: a trade pours its armies into the holding dab.
         if (this.turnArmies && this.turnArmies.player === ev.player && this.turnArmies.turn === d.turn) {
           this.turnArmies = { ...this.turnArmies, cards: this.turnArmies.cards + v };
@@ -1946,11 +1983,11 @@ class Controller {
         this.play('victory');
         this.clearSave();
         this.victory = this.buildVictory(e.after, ev.winner, null);
-        this.startReplay(e.after, ev.winner);
-        this.screen = 'victory';
         this.turnBanner = null;
         this.banner = null;
         this.bannerQueue = [];
+        // v6: the winner's wave plays on the board first (≈ 1.05 s); the victory screen and replay rise when it
+        // resolves (onEventEnd), not over it.
         break;
       }
       default:
@@ -2010,6 +2047,11 @@ class Controller {
         this.log('card', ev.player, `${pName(d, ev.player)} drew a card`);
         break;
       case 'gameOver':
+        // v6: the board's winner wave has resolved: the winner first, then the (skippable) replay and the sheet.
+        if (this.victory && this.screen === 'game') {
+          this.startReplay(e.after, ev.winner);
+          this.screen = 'victory';
+        }
         if (!skip) this.board.setAttractMode(true);
         break;
       case 'phaseChanged':
@@ -3244,7 +3286,7 @@ class Controller {
     }
     const block = can ? null : peaceAskBlockOf(s, me, to);
     if (block) {
-      this.reject('peace_blocked', block.replace(/\.$/, ''));
+      this.reject('peace_blocked', plainPeace(block));
       this.invalidate();
       return;
     }
@@ -3258,7 +3300,7 @@ class Controller {
     const ai = d.players[ev.from]?.kind === 'ai' ? ev.from : ev.to;
     const human = ai === ev.from ? ev.to : ev.from;
     const name = pName(d, ai);
-    const said = (truceSentence(d, ev) ?? ev.reason ?? '').trim();
+    const said = plainPeace((truceSentence(d, ev) ?? ev.reason ?? '').trim());
     const text = said
       ? said
       : ev.accepted
@@ -3750,7 +3792,7 @@ class Controller {
         break;
       case 'cardsPanel': {
         const was = this.cardsOpen;
-        this.cardsOpen = i.open && !!this.state && this.interactive() && this.state.phase.kind === 'reinforce';
+        this.cardsOpen = i.open && !!this.state && this.interactive() && ['reinforce', 'attack', 'occupy', 'fortify'].includes(this.state.phase.kind);
         if (was !== this.cardsOpen) this.sheet(this.cardsOpen);
         break;
       }
@@ -3899,7 +3941,7 @@ class Controller {
     this.queue = [];
     this.skipAll = true;
     this.board.skipAnimations();
-    this.victory = this.buildVictory(s, leader, `Called in round ${Math.max(1, s.round)}`);
+    this.victory = this.buildVictory(s, leader, `Called in round ${Math.max(1, s.round)}${SEP}${pName(s, leader)} held the most territories`);
     this.startReplay(s, leader);
     this.screen = 'victory';
     this.allHumansOut = false;
@@ -4641,10 +4683,21 @@ class Controller {
 
   /** The read-only hand sheet: only for the seat placing now (never behind the hand-off cover). */
   private buildCards(d: GameState, interactive: boolean): CardsVM | null {
-    if (!interactive || d.phase.kind !== 'reinforce') return null;
+    // v6: the hand is yours to look at on every step of your own turn; a trade only in Place.
+    const k = d.phase.kind;
+    if (!interactive || (k !== 'reinforce' && k !== 'attack' && k !== 'occupy' && k !== 'fortify')) return null;
     const me = d.currentPlayer;
     const hand = d.players[me].cards;
-    const best = bestSet(d, me);
+    const set = bestSet(d, me);
+    if (k !== 'reinforce') {
+      return {
+        open: this.cardsOpen,
+        hand: hand.map((c) => ({ id: c.id, symbol: c.symbol, territory: c.territory ? tName(c.territory) : null, ownedBonus: !!c.territory && d.territories[c.territory].owner === me, inSet: !!set?.cardIds.includes(c.id) })),
+        status: set ? `Set ready${SEP}trade it when you place` : noSetStatus(hand),
+        trade: null,
+      };
+    }
+    const best = set;
     return {
       open: this.cardsOpen,
       hand: hand.map((c) => ({
@@ -4763,6 +4816,7 @@ class Controller {
 
   private pushHighlights(): void {
     this.pushStrokeSources();
+    this.syncCapitals();
     this.syncLean(this.leanTarget());
     const h = this.buildHighlights();
     const preview = this.boardPreview() ? this.previewTotals() : null;
@@ -4771,6 +4825,21 @@ class Controller {
     this.lastHighlightsKey = key;
     this.board.setHighlights(h);
     if (this.boardPreview()) (this.board as PreviewBoard).setCountPreview!(preview);
+  }
+
+  /**
+   * v6 capitals: the board marks each seat's capital (BoardView.setCapitals) once they are dealt (play starts), on a
+   * load, and clears them for a game without the rule. Keyed, so the board hears only a change.
+   */
+  private syncCapitals(): void {
+    if (!this.board.setCapitals) return;
+    const d = this.screen === 'game' || this.screen === 'victory' ? this.disp : null;
+    const caps: Partial<Record<TerritoryId, PlayerId>> = {};
+    if (d?.config.capitals) for (const p of d.players) if (p.capital && !p.neutral) caps[p.capital] = p.id;
+    const key = JSON.stringify(caps);
+    if (key === this.capitalsKey) return;
+    this.capitalsKey = key;
+    this.board.setCapitals(Object.keys(caps).length ? caps : null);
   }
 
   /** The board can draw the totals a count would leave on both pieces (docs/ROUND2.md §B). */
@@ -4810,12 +4879,20 @@ class Controller {
     const reason = s.phase.kind === 'game-over' ? s.phase.reason : null;
     // 'Round 14 · 31 territories' (docs/INK.md B5): real numbers, no percentages.
     const held = territoryCount(s, winner);
-    const terr = `${held} ${held === 1 ? 'territory' : 'territories'}`;
-    const subline = called
-      ? `${called}${SEP}${terr}`
-      : reason === 'turnLimit'
+    const size = mapDefOf(s.config).size;
+    // v6: '16 of 42 territories', so a called game or a share-of-the-board win never reads as the whole world.
+    const terr = `${held} of ${size} territories`;
+    const round = Math.max(1, s.round);
+    const subline =
+      reason === 'turnLimit' && !called
         ? `Round ${s.round} of ${s.config.turnLimit}${SEP}${terr}`
-        : `Round ${Math.max(1, s.round)}${SEP}${terr}`;
+        : `Round ${round}${SEP}${terr}`;
+    const wholeBoard = held >= size;
+    const where = mapDefOf(s.config).rules === mapDefOf({ mapId: 'classic' }).rules ? 'the world' : 'the board';
+    // 'Ochre holds the world' only when they do; a share of the board or the round limit: 'Ochre wins'; called: 'Ochre leads'.
+    const title = called
+      ? `${pName(s, winner)} leads`
+      : (this.missionHeadline(s) ?? (wholeBoard ? `${pName(s, winner)} holds ${where}` : `${pName(s, winner)} wins`));
     const awards = meta ? buildAwards(meta.awards, s) : [];
     const timeline = [...s.timeline];
     if (called) {
@@ -4829,8 +4906,9 @@ class Controller {
       seed: this.gameSeed(s),
       winner: seatRef(s, winner),
       // v6 maps: "the world" only on the world boards; a regional or city board is "the board"
-      title: this.missionHeadline(s) ?? `${pName(s, winner)} holds ${mapDefOf(s.config).rules === mapDefOf({ mapId: 'classic' }).rules ? 'the world' : 'the board'}`,
+      title,
       subline,
+      ...(called ? { called } : {}),
       awards: awards.map((a) => ({ id: a.id, title: a.title, text: a.text, seat: seatRef(s, a.player) })),
       seats: s.players.map((p) => seatRef(s, p.id)),
       timeline,
