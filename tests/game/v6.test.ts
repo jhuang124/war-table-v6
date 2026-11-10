@@ -6,7 +6,7 @@ import type { BoardView, TerritoryPointerInfo } from '../../src/render/BoardView
 import { createController } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY, SETTINGS_KEY, UI_KEY, type KV } from '../../src/game/storage';
 import type { GameState, TerritoryId } from '../../src/engine';
-import { board as fixture } from './fixtures';
+import { board as fixture, card } from './fixtures';
 import { buildNewGameVM, defaultDraft, draftSummary, draftToConfig, removeSeat, sanitizeDraft } from '../../src/game/presets';
 
 function fakeBoard() {
@@ -187,5 +187,212 @@ describe('3 · the seat picker', () => {
     const d = defaultDraft();
     d.seats[1] = { ...d.seats[1], difficulty: 'hard' };
     expect(draftToConfig(d, 1).players[1]).toMatchObject({ difficulty: 'hard', handicap: 1 });
+  });
+});
+
+/** Run fake time until the controller is idle on a live human turn (or `ms` passes). */
+async function settle(c: ReturnType<typeof make>['c'], ms = 20_000) {
+  for (let t = 0; t < ms; t += 50) {
+    await vi.advanceTimersByTimeAsync(50);
+    if (c.hooks.isIdle() && c.hooks.ui().trackLive) return;
+  }
+}
+
+describe('1 · the quiet opening (2 players)', () => {
+  const two = [
+    { name: 'Vermilion', color: 'crimson' as const, kind: 'human' as const },
+    { name: 'Slate', color: 'cobalt' as const, kind: 'human' as const },
+  ];
+
+  it('the line and the track explain it; Place → Fortify → End; the second player can attack', async () => {
+    const { c, fb } = make();
+    c.hooks.setSpeed(0, 'instant');
+    c.hooks.newGame({ players: two, seed: 11 });
+    await settle(c);
+    let s = c.hooks.getState()!;
+    expect(s.turn).toBe(1);
+    expect(s.phase.kind).toBe('reinforce');
+    const me = s.currentPlayer;
+    const remaining = (s.phase as { remaining: number }).remaining;
+    const colour = me === 0 ? 'Vermilion' : 'Slate';
+    expect(c.hooks.ui().line).toBe(`You're ${colour} · place ${remaining} · no attacks this turn`);
+    const seg = (id: string) => c.getViewModel().game!.strip.track.segments.find((x) => x.id === id)!;
+    expect(seg('attack').state).toBe('locked');
+    // Place everything on one territory.
+    const own = (Object.keys(s.territories) as TerritoryId[]).find((t) => s.territories[t].owner === me)!;
+    fb.click(own);
+    await vi.advanceTimersByTimeAsync(100);
+    c.intent({ type: 'button', id: 'place' });
+    await vi.advanceTimersByTimeAsync(100);
+    // never gold on Attack: the recommended step is past it
+    let g = c.getViewModel().game!;
+    expect(g.strip.track.recommended).not.toBe('attack');
+    expect(g.gold).not.toEqual({ kind: 'segment', seg: 'attack' });
+    if (c.hooks.getState()!.phase.kind === 'reinforce') expect(g.strip.line).toBe('No attacks on the opening turn · fortify or end your turn');
+    // the auto-advance lands on Fortify, never Attack
+    await vi.advanceTimersByTimeAsync(1500);
+    s = c.hooks.getState()!;
+    expect(s.phase.kind).toBe('fortify');
+    g = c.getViewModel().game!;
+    expect(g.strip.track.recommended).toBe('endTurn');
+    c.intent({ type: 'track', seg: 'endTurn' });
+    await vi.advanceTimersByTimeAsync(500);
+    await settle(c);
+    s = c.hooks.getState()!;
+    expect(s.currentPlayer).not.toBe(me);
+    expect(s.turn).toBe(2);
+    // the second player: named, and Attack opens after placing
+    const other = s.currentPlayer;
+    expect(c.hooks.ui().line).toMatch(new RegExp(`^You're ${other === 0 ? 'Vermilion' : 'Slate'} · place \\d+ armies$`));
+    const t2 = (Object.keys(s.territories) as TerritoryId[]).find((t) => s.territories[t].owner === other)!;
+    fb.click(t2);
+    await vi.advanceTimersByTimeAsync(100);
+    c.intent({ type: 'button', id: 'place' });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(c.hooks.getState()!.phase.kind).toBe('attack');
+    expect(c.getViewModel().game!.strip.track.segments.find((x) => x.id === 'attack')!.state).toBe('current');
+    c.dispose();
+  });
+
+  it('a click on the locked Attack segment puts the reason in the line', async () => {
+    const { c } = make();
+    c.hooks.setSpeed(0, 'instant');
+    c.hooks.newGame({ players: two, seed: 5 });
+    await settle(c);
+    c.intent({ type: 'track', seg: 'attack' });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(c.hooks.ui().line).toBe('No attacks on the opening turn');
+    c.dispose();
+  });
+});
+
+describe('2 · a person moves first', () => {
+  it('1 human + 3 AI: the human moves first and the line names their colour', async () => {
+    const { c } = make();
+    c.hooks.setSpeed(0, 'instant');
+    c.hooks.newGame({
+      players: [
+        { name: 'Vermilion', color: 'crimson', kind: 'human' },
+        { name: 'Slate', color: 'cobalt', kind: 'ai', difficulty: 'normal' },
+        { name: 'Ochre', color: 'amber', kind: 'ai', difficulty: 'normal' },
+        { name: 'Sage', color: 'emerald', kind: 'ai', difficulty: 'normal' },
+      ],
+      seed: 3,
+    });
+    await settle(c);
+    const s = c.hooks.getState()!;
+    expect(s.turn).toBe(1);
+    expect(s.currentPlayer).toBe(0);
+    expect(c.hooks.ui().line).toMatch(/^You're Vermilion · place \d+ armies$/);
+    c.dispose();
+  });
+});
+
+describe('4 · the threat line and the seat card fields', () => {
+  it('a seat that can win next turn: needs N · holds a set worth M; AI difficulty as a word', async () => {
+    // John (0) holds 26 of 42 with a 30-army stack; the goal is 30 (70%).
+    const own: Record<string, [number, number]> = {};
+    const ids = Object.keys(fixture({}).territories) as TerritoryId[];
+    ids.slice(0, 26).forEach((t) => (own[t] = [0, 2]));
+    const s = fixture(own, { kind: 'attack' }, {});
+    s.config = { ...s.config, dominationPercent: 70 };
+    s.territories[ids[0]].armies = 30;
+    s.players[0].cards = [card(1, 'infantry'), card(2, 'infantry'), card(3, 'infantry')];
+    const { c } = await load(s);
+    const seats = c.getViewModel().game!.seats;
+    expect(seats[0].threat).toMatch(/^needs \d+ · holds a set worth \d+$/);
+    expect(seats[2].difficulty).toBe('Normal');
+    expect(seats[0].difficulty ?? null).toBeNull();
+    expect(seats[1].threat ?? null).toBeNull();
+    c.dispose();
+  });
+});
+
+describe('5 · capitals', () => {
+  it('the board marks them from the state; the breakdown says capital +1; the line names only its own seat losing it', async () => {
+    const s = fixture({ ural: [0, 9], siberia: [1, 1], peru: [1, 3] }, { kind: 'attack' });
+    s.config = { ...s.config, capitals: { bonus: 1 } };
+    s.players[0].capital = 'ural';
+    s.players[1].capital = 'siberia';
+    s.players[2].capital = 'brazil';
+    const { c, fb } = await load(s);
+    expect(fb.last('setCapitals')).toEqual({ ural: 0, siberia: 1, brazil: 2 });
+    // Sam's capital falls to John: named
+    c.hooks.dispatch({ type: 'blitz', player: 0, from: 'ural', to: 'siberia' });
+    for (let t = 0; t < 3000 && c.hooks.getState()!.territories.siberia.owner !== 0; t += 50) await vi.advanceTimersByTimeAsync(50);
+    let said = '';
+    for (let t = 0; t < 3000 && !said; t += 20) {
+      await vi.advanceTimersByTimeAsync(20);
+      const l = c.hooks.ui().line;
+      if (/capital/.test(l)) said = l;
+    }
+    expect(said).toBe("Sam's capital falls · John takes Siberia");
+    c.dispose();
+  });
+
+  it('capitalLine: own seat loses it or takes it back; a third holder changing hands is silent', async () => {
+    const { capitalLine } = await import('../../src/game/controller');
+    const s = fixture({});
+    expect(capitalLine(s, 1, 0, 1, 'siberia')).toBe("Sam's capital falls · John takes Siberia");
+    expect(capitalLine(s, 1, 1, 2, 'siberia')).toBe('Sam takes back its capital, Siberia');
+    expect(capitalLine(s, 1, 0, 2, 'siberia')).toBeNull();
+  });
+
+  it('the holding breakdown names capitals', async () => {
+    const { holdingBreakdown } = await import('../../src/game/story');
+    expect(holdingBreakdown({ territoryCount: 9, base: 3, continents: [], total: 4, capitals: [{ territory: 'ural', of: 0, bonus: 1 }] })).toBe('9 territories +3 · capital +1');
+  });
+});
+
+describe('6 · peace copy', () => {
+  it('reads as one plain sentence', async () => {
+    const { plainPeace } = await import('../../src/game/controller');
+    expect(plainPeace('You asked Sage in round 5 · once a game')).toBe('You asked Sage in round 5 · you can ask each AI once a game');
+    expect(plainPeace('You are at peace with Ochre · one peace at a time')).toBe('You are at peace with Ochre · you can hold one peace at a time');
+    expect(plainPeace('Sage refuses · you are stronger')).toBe('Sage refuses · you are stronger');
+  });
+});
+
+describe('7 · cards on every own step', () => {
+  it('the hand is sent in Attack and Fortify too, with no trade there', async () => {
+    const s = fixture({ ural: [0, 5], ukraine: [0, 3] }, { kind: 'attack' });
+    s.players[0].cards = [card(1, 'infantry'), card(2, 'infantry'), card(3, 'infantry')];
+    const { c } = await load(s);
+    const cards = c.getViewModel().game!.cards!;
+    expect(cards.hand).toHaveLength(3);
+    expect(cards.trade).toBeNull();
+    expect(cards.status).toBe('Set ready · trade it when you place');
+    c.intent({ type: 'cardsPanel', open: true });
+    expect(c.getViewModel().game!.cards!.open).toBe(true);
+    c.dispose();
+  });
+});
+
+describe('8 · the ending', () => {
+  it('a real win: the victory screen rises when the board wave resolves, not at its start', async () => {
+    let release: (() => void) | null = null;
+    const s = fixture({ ural: [0, 30], siberia: [1, 1] }, { kind: 'attack' });
+    for (const t of Object.keys(s.territories) as TerritoryId[]) if (t !== 'siberia') s.territories[t] = { owner: 0, armies: t === 'ural' ? 30 : 1 };
+    s.players[2].eliminated = true;
+    const kv = memoryKV();
+    kv.set(SAVE_KEY, JSON.stringify({ v: 1, savedAt: 0, state: s }));
+    const fb = fakeBoard();
+    const orig = fb.b.playEvent;
+    fb.b.playEvent = (ev, after, o) => (ev.type === 'gameOver' ? new Promise<void>((r) => (release = r)) : orig(ev, after, o));
+    const au = spyAudio();
+    const c = createController({ board: fb.b, audio: au.a, storage: kv, clock, dom: false, prefersReducedMotion: () => false });
+    c.intent({ type: 'continue' });
+    await vi.advanceTimersByTimeAsync(50);
+    c.hooks.dispatch({ type: 'blitz', player: 0, from: 'ural', to: 'siberia' });
+    for (let t = 0; t < 5000 && !release; t += 20) await vi.advanceTimersByTimeAsync(20);
+    expect(release).not.toBeNull();
+    expect(c.getViewModel().screen).toBe('game');
+    expect(c.getViewModel().victory?.title).toBe('John holds the world');
+    release!();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(c.getViewModel().screen).toBe('victory');
+    expect(c.getViewModel().victory!.subline).toMatch(/^Round 3 · 42 of 42 territories$/);
+    expect(c.getViewModel().victory!.called ?? null).toBeNull();
+    c.dispose();
   });
 });
