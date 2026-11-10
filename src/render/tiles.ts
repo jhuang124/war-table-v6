@@ -312,8 +312,9 @@ export class TileSet {
         w = 3;
         break;
       case 'target':
-        a = pulse;
-        w = 2.5;
+        // v6-board: a legal target's ivory rim is unmistakable (0.75 ↔ 1, heavier); the rest recede (index.ts)
+        a = Math.min(1, 0.35 + pulse * 0.8);
+        w = 3.1;
         break;
       case 'armed':
         a = 0.95;

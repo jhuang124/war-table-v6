@@ -20,11 +20,11 @@ const SERIF = "'Cormorant Garamond Variable','Cormorant Garamond',Georgia,serif"
 const CSS = `
 .rb-overlay{position:absolute;inset:0;pointer-events:none;overflow:hidden;user-select:none;-webkit-user-select:none;contain:strict;--ui:1;--lab:1}
 .rb-badge,.rb-trav{position:absolute;left:0;top:0;width:28px;height:16px;display:flex;align-items:center;justify-content:center;
-  box-sizing:border-box;color:#f2ede2;font:600 14px/1 ${SERIF};font-variant-numeric:lining-nums tabular-nums;font-feature-settings:'lnum' 1,'tnum' 1;
+  box-sizing:border-box;color:#f6f1e6;font:700 14px/1 ${SERIF};font-variant-numeric:lining-nums tabular-nums;font-feature-settings:'lnum' 1,'tnum' 1;
   letter-spacing:0;white-space:nowrap;will-change:transform;visibility:hidden;transition:opacity 180ms ease-out}
 .rb-ring{display:none}
 .rb-badge .n,.rb-trav .n{position:relative;display:block;transform:translateY(-.04em);
-  text-shadow:0 0 1px var(--halo,#0b1224),0 0 1px var(--halo,#0b1224),0 0 1.5px var(--halo,#0b1224)}
+  text-shadow:0 0 1px var(--halo,#0b1224),0 0 1px var(--halo,#0b1224),0 0 2px var(--halo,#0b1224),0 .04em .22em var(--pool,rgba(11,18,36,.75))}
 .rb-badge.dim{opacity:.8}
 .rb-badge.ghosted{z-index:2}
 .rb-ghost{position:absolute;left:calc(100% + 2px);top:50%;transform:translateY(-54%);color:#f2ede2;
@@ -69,6 +69,8 @@ interface Badge {
   lastD: number;
   lastInk: string;
   ghostN: number;
+  /** v6: the count's tick-up (setBadge), bumped on every change. */
+  tickVer: number;
   /** Client px (for getScreenPosition / sound pan). */
   x: number;
   y: number;
@@ -150,6 +152,17 @@ export class Overlay {
   zoomScale = 1;
   /** Smallest count plaque, CSS px (× the text-size softening). Phones use 20 (docs/MOBILE.md §6). */
   minPlaque = 22;
+  /** v6: the HUD's top strip and bottom dock heights (container px): counts and names fade out under them. */
+  hudBands: [number, number] = [0, 0];
+  /** 0..1: how far a box's centre line is clear of the HUD bands (1 = clear, 0 = under one). */
+  private hudClear(y0: number, y1: number): number {
+    const [t, b] = this.hudBands;
+    const f = 26;
+    const yc = (y0 + y1) / 2;
+    const top = t > 0 ? Math.min(1, Math.max(0, (yc - t) / f)) : 1;
+    const bot = b > 0 ? Math.min(1, Math.max(0, (this.height - b - yc) / f)) : 1;
+    return top * bot;
+  }
   /** Phones: nudge overlapping count plaques apart (relaxPlaques). */
   relax = false;
   private pos = new Float64Array(MAP.territoryIds.length * 6);
@@ -232,6 +245,7 @@ export class Overlay {
         lastD: 0,
         lastInk: '',
         ghostN: 0,
+        tickVer: 0,
         x: 0,
         y: 0,
         cx: 0,
@@ -281,8 +295,26 @@ export class Overlay {
     if (!pal) return;
     if (b.shown !== n) {
       if (String(b.shown).length !== String(n).length) b.lastD = 0; // refit the font
-      b.num.textContent = String(n);
+      const from = b.shown;
       b.shown = n;
+      b.tickVer++;
+      // v6 "mass lands": a count that grows by several (a placement, an army landing) ticks up to its total
+      // (≤ 300 ms, the ticks thinning), so 12 arriving reads as 12; one army, a loss or a hidden stone just changes
+      if (from > 0 && n - from >= 2 && b.visible && !this.anim.instant && b.lastT !== '' && b.lastT !== 'off') {
+        const ver = b.tickVer;
+        const steps = n - from;
+        void this.anim.tween({
+          ms: Math.min(300, 45 * steps),
+          ease: ease.outCubic,
+          update: (v) => {
+            if (b.tickVer !== ver) return;
+            b.num.textContent = String(from + Math.round(steps * v));
+          },
+          done: () => {
+            if (b.tickVer === ver) b.num.textContent = String(n);
+          },
+        });
+      } else b.num.textContent = String(n);
     }
     if (b.lastInk !== pal.id) {
       // ivory on every stone (the stone's wash is laid on thicker than the territory's, dark enough for it)
@@ -296,7 +328,9 @@ export class Overlay {
       b.el.style.color = '';
       // The numeral: ivory with a 1 px ink halo in the seat's deep tone, so it reads over the stone's rim,
       // the wash and the paper alike.
-      b.el.style.setProperty('--halo', `rgba(${dr},${dg},${db},0.92)`);
+      b.el.style.setProperty('--halo', `rgba(${dr},${dg},${db},0.95)`);
+      // v6: a soft pool of the seat's deep ink under the digits, so the count holds on every wash and the paper
+      b.el.style.setProperty('--pool', `rgba(${Math.round(dr * 0.6)},${Math.round(dg * 0.6)},${Math.round(db * 0.6)},0.8)`);
       b.lastInk = pal.id;
     }
     if (pop) this.pop(id);
@@ -540,7 +574,8 @@ export class Overlay {
    */
   private numeralPx(h: number): number {
     const soft = 1 + (this._ui - 1) * 0.8;
-    return Math.max(this.tokens.numMin * soft, Math.min(h, 28 * soft));
+    // (v6: the top follows the device's floor, so a zoomed-in count grows a little past its home size)
+    return Math.max(this.tokens.numMin * soft, Math.min(h, this.tokens.numMin * 1.55 * soft));
   }
   /** A disc's diameter on screen (px) at a base point, from its world radius. */
   private discPx(base: THREE.Vector3, r: number, camera: THREE.Camera): number {
@@ -672,7 +707,7 @@ export class Overlay {
         b.el.style.height = `${hq}px`;
         b.el.style.fontSize = `${Math.round(fs * 2) / 2}px`;
       }
-      const op = Math.round(Math.min(1, vis) * 20) / 20;
+      const op = Math.round(Math.min(1, vis) * this.hudClear(py - ph / 2, py + ph / 2) * 20) / 20;
       if (op !== b.lastOp) {
         b.lastOp = op;
         b.el.style.opacity = op >= 1 ? '' : String(op);
@@ -848,7 +883,7 @@ export class Overlay {
       const l = this.labels[i];
       const b = this.badgeList[i];
       const isFocus = focus.has(l.id);
-      const want = (isFocus || this.showAll) && b.onScreen && !this.underTray(b.cx, b.cy);
+      const want = (isFocus || this.showAll) && b.onScreen && !this.underTray(b.cx, b.cy) && this.hudClear(b.cy - 8, b.cy + 8) > 0.5;
       if (l.focus !== isFocus) {
         l.focus = isFocus;
         l.el.classList.toggle('focus', isFocus);
@@ -877,7 +912,8 @@ export class Overlay {
           countsClear(x0, y0, x1, y1) && !(this.relax && oc.on && (this.overTray(x0, y0 + 2, x1, y1, this.headerBand) || onRing(x0, y0 + 2, x1, y1)));
         if (free(i, x0, below, x1, below + l.h) && clear(x0, below, x1, below + l.h)) place = [b.cx, below];
         else if (shown && free(i, x0, above, x1, above + l.h) && clear(x0, above, x1, above + l.h)) place = [b.cx, above];
-        else if (isFocus && !this.relax) place = [b.cx, below];
+        // (v6-board: desktop names look for a clear spot too before falling back under the piece — "URAL"
+        // printed under the 12 stone in the v6 audit)
         else if (isFocus) {
           // Phones: a name that must show: beside its piece if that is clear, else wherever it at least misses the
           // other names (the source and target names of a fight on a phone would otherwise stack).
@@ -957,6 +993,7 @@ export class Overlay {
               one = [w1, h1];
             }
           }
+          if (!place && !this.relax) place = [b.cx, below];
         }
       }
       if (!one && l.el.classList.contains('one')) l.el.classList.remove('one');

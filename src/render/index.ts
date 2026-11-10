@@ -160,6 +160,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   tokens.reduced = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)').matches : false;
   const continents = new Continents(G, anim, shared, ink);
   scene.add(continents.group);
+  continents.tiles = tiles; // v6-board: the take's wash pulse
   const arrow = new AttackArrow(tiles, anim, ink.noise);
   scene.add(arrow.group);
   const route = new FortifyRoute(tiles, anim, ink.noise);
@@ -404,7 +405,18 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // v4 E4: the land takes the seat's tint, the stone keeps its full pigment
     t.rgb = washRgb(lastState, owner);
     t.dirty = true;
-    tokens.setColor(id, tileRgb(lastState, owner), edgeRgb(lastState, owner));
+    tokens.setColor(id, tileRgb(lastState, owner), edgeRgb(lastState, owner), pal(owner)?.emblem ?? null); // v6-board: emblem on the stone
+  };
+
+  // v6-board: capitals (setCapitals): territory → the seat whose capital it is
+  let capitals: Partial<Record<TerritoryId, PlayerId>> = {};
+  const applyCapitals = () => {
+    const m = new Map<TerritoryId, RGB>();
+    for (const [t, seat] of Object.entries(capitals) as [TerritoryId, PlayerId][]) {
+      const p = seat !== undefined && seat >= 0 ? pal(seat) : null;
+      if (p) m.set(t, mixRgb(hexToRgb(p.base), hexToRgb(p.light), 0.55));
+    }
+    tokens.setCapitals(m);
   };
 
   const refreshBadge = (id: TerritoryId, pop = false) => {
@@ -451,7 +463,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       }
       // Fortify's phase dim is deeper than a selection's: the board becomes "your side" (docs/ROUND2.md §A).
       // A pick shows its reach (PLAN §2 'visible water = adjacency'): land it can't touch recedes a little.
-      const reach = sel && !fightPair && t.id !== sel && !MAP.adjacency[sel].includes(t.id) ? 0.8 : 0;
+      // v6-board: with targets offered, everything that isn't one (or the pick) recedes, so the legal targets read
+      const reach = sel && !fightPair && t.id !== sel && (targets.size ? !targets.has(t.id) : !MAP.adjacency[sel].includes(t.id)) ? (targets.size ? 1.1 : 0.8) : 0;
       const dim = Math.max(h.dimOthers && !keep.has(t.id) ? 1 : 0, phaseDimmed.has(t.id) ? 1.8 : 0, fightDimOf(t.id), reach);
       if (Math.abs(dim - t.dim) > 1e-4) tw(t, 'dim', t.dim, dim, fightDimMs ?? (dim > t.dim ? 180 : 140), ease.outQuad);
       overlay.setDim(t.id, dim >= 1);
@@ -1466,7 +1479,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const t = tiles.get(id);
     const start = () => {
       owners[id] = owner;
-      tokens.setColor(id, tileRgb(lastState, owner));
+      tokens.setColor(id, tileRgb(lastState, owner), undefined, pal(owner)?.emblem ?? null); // v6-board: emblem
       if (armies[id] < 1) armies[id] = 1;
       tokens.setArmies(id, armies[id], 'snap');
       refreshBadge(id, true);
@@ -2220,7 +2233,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         armies[to] = 0;
         overlay.hideBadge(to);
         tokens.setArmies(to, 0, 'out', null, e.from);
-        tokens.setColor(to, tileRgb(lastState, e.player));
+        tokens.setColor(to, tileRgb(lastState, e.player), undefined, pal(e.player)?.emblem ?? null); // v6-board: emblem
         // A5: a human's territory falling is the sting (the dry brush snap), whoever took it.
         const somber = o.sting ?? isHuman(prevOwner);
         sfx('conquer', { volume: isHuman(e.player) || isHuman(prevOwner) ? 1 : 0.5, pan: panOf(to), variant: somber ? 'somber' : undefined });
@@ -2466,6 +2479,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   const syncState = (s: GameState) => {
     lastState = s;
     ensureColors(s);
+    applyCapitals(); // v6-board: the capitals' pigments follow the seats' colours
     let changed = false;
     // A snap (load, resume, after a skip) leaves no fight on the board: an event-drawn arrow with nothing
     // playing is stale.
@@ -2950,9 +2964,13 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // numeral inside; a smaller floor lets the crowded pieces clear each other.)
     const phoneLandNow = compact && W > H;
     // [board-pieces v4] the stone scale law (tokens.stoneK): 10 → 44 px at 1440; phones a flatter pair.
-    tokens.dminPx = phoneLandNow ? 8.5 : compact ? 9 : 10;
-    tokens.numMin = compact ? NUMERAL_MIN_PHONE : NUMERAL_MIN;
-    tokens.dmaxPx = phoneLandNow ? 28 : compact ? 30 : 44;
+    // v6-board: the count is the hero mark. A 1-army stone is 22 px at 1440×900 (phones 13–14), and the
+    // pieces grow with a larger desktop window (1920×1080: ×1.2), so the couch reads them (tokens.numeralPxFor).
+    const vs = compact ? 1 : clamp(Math.min(W / 1440, H / 900), 0.9, 1.5);
+    tokens.dminPx = (phoneLandNow ? 13 : compact ? 14 : 22) * vs;
+    tokens.numMin = (compact ? NUMERAL_MIN_PHONE : NUMERAL_MIN) * vs;
+    tokens.dmaxPx = (phoneLandNow ? 28 : compact ? 30 : 50) * vs;
+    tokens.emblemScale = compact ? 0.72 : vs;
     for (let it = 0; it < 3; it++) {
       setPieceExtents();
       rig.recomputeHome();
@@ -3139,6 +3157,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // the board's three largest stacks changed: they keep their size (fitCaps)
     if (W > 1 && (bigThree().join(',') !== bigKey || bucketsNow() !== bucketKey)) fitCaps();
     tokens.setView(rig.cur.az, rig.cur.pitch);
+    // v6-board: pieces and counts fade under the HUD's top strip and bottom dock (a deep zoom)
+    // (only once zoomed past the home view: at home the framing already keeps the pieces clear)
+    const hudDeep = rig.zoom > 1.08;
+    tokens.setHudBands(hudDeep ? insets.top : 0, hudDeep ? insets.bottom : 0, renderer.domElement.height, renderer.getPixelRatio(), 26);
+    overlay.hudBands = hudDeep ? [insets.top, insets.bottom] : [0, 0];
     tokens.update();
     tray.tick(now);
     if (tray.showing !== trayShownEmitted) emitTray(tray.showing);
@@ -3476,6 +3499,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       keepBand = insets.trayBand;
       layoutTray();
     },
+    // v6-board: capitals (BoardView.setCapitals): a second rim in the first holder's pigment
+    setCapitals(c: Partial<Record<TerritoryId, PlayerId>> | null) {
+      capitals = c ?? {};
+      applyCapitals();
+    },
     setReducedMotion(on: boolean) {
       reduced = on;
       tokens.reduced = on;
@@ -3559,7 +3587,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       chill.dispose();
       overlay.dispose();
       parts.waves.dispose();
-      for (const t of [ink.ink, ink.field, ink.cont, ink.noise, ink.waves, shared.uTerr.value]) t.dispose();
+      for (const t of [ink.ink, ink.field, ink.cont, ink.landDist, ink.noise, ink.waves, shared.uTerr.value]) t.dispose(); // v6-board: landDist
       window.removeEventListener('keydown', onWindowInput);
       window.removeEventListener('pointerdown', onWindowInput);
       scene.traverse((o) => {

@@ -29,6 +29,8 @@ export interface InkLayer {
   field: THREE.DataTexture;
   /** The printed continents (v3): R outline distance, G own continent (255 = open sea), B the outline's continent. */
   cont: THREE.DataTexture;
+  /** v6: R = distance to the nearest playable land (0 → 1 over LAND_DR units): decorative land fades with it. */
+  landDist: THREE.DataTexture;
   noise: THREE.DataTexture;
   waves: THREE.CanvasTexture;
   /** Number of wave variants stacked vertically in `waves`. */
@@ -662,8 +664,25 @@ export const CONT_REACH = 2.1;
 /** The outline distance channel's range, board units (R = 1 at and past it). */
 export const CONT_DR = 1.2;
 
-/** The printed continents' field (see buildInk): outline distance, own continent, the outline's continent. */
-async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number, contOf: Uint8Array, DECOR: number): Promise<THREE.DataTexture> {
+/** v6: the printed region stays this far inside the board's edge (board units), its corners rounded over CONT_EDGE_ROUND. */
+export const CONT_EDGE = 0.35;
+/** v6: the playable-land distance texture's range, board units. */
+export const LAND_DR = 6;
+export const CONT_EDGE_ROUND = 1.4;
+const smin = (a: number, b: number, k: number) => {
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.min(a, b) - h * h * k * 0.25;
+};
+
+/**
+ * The printed continents' field (see buildInk): outline distance, own continent, the outline's continent.
+ * v6-board: the line is no longer a chain of field texels (it stair-stepped at close zoom, audit F2). The region
+ * comes from a smooth signed field (the closing's own distances, eased inside the board edge); every boundary
+ * between two texels gets a sub-texel crossing point (the field's zero for the open sea, the two coasts'
+ * bisector between continents), the points are smoothed along the line, and R is the true distance to the
+ * polyline through them.
+ */
+async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number, contOf: Uint8Array, DECOR: number): Promise<{ tex: THREE.DataTexture; landDist: THREE.DataTexture }> {
   const N = W * H;
   // nearest playable land for every texel (decorative land counts as sea: the halo runs over it)
   const land = new Uint8Array(N);
@@ -679,12 +698,57 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
   const O = edt2d(outside, W, H);
   await yieldFrame();
   const shrink = (CONT_REACH - CONT_HALO) * sF;
+  // the signed region field, texels (> 0 inside): the closing's distance, and the board edge's inset, joined
+  // with a rounded corner so the line turns away from the edge instead of running flat along it
+  const S = new Float32Array(N);
+  const em = CONT_EDGE * sF;
+  const ek = CONT_EDGE_ROUND * sF;
   const cont = new Uint8Array(N).fill(255);
-  for (let i = 0; i < N; i++) if (O.dist[i] > shrink) cont[i] = contOf[ids[A.near[i]]] ?? 255;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const raw = O.dist[i] > 0 ? O.dist[i] - shrink : -(A.dist[i] - reach) - shrink;
+      const ed = Math.min(x + 0.5, y + 0.5, W - x - 0.5, H - y - 0.5) - em;
+      S[i] = smin(raw, ed, ek);
+      if (S[i] > 0) cont[i] = contOf[ids[A.near[i]]] ?? 255;
+    }
+  // v6: a scrap of a printed region with none of its continent's land in it (a pocket of halo cut off between
+  // two others: Boston's empty circle in the harbour) goes back to the sea before the pools are filled
+  {
+    const seen = new Uint8Array(N);
+    const stack: number[] = [];
+    const comp: number[] = [];
+    for (let s0 = 0; s0 < N; s0++) {
+      const c0 = cont[s0];
+      if (seen[s0] || c0 === 255) continue;
+      comp.length = 0;
+      let own = 0;
+      stack.push(s0);
+      seen[s0] = 1;
+      while (stack.length) {
+        const i = stack.pop()!;
+        comp.push(i);
+        if (land[i] && contOf[ids[i]] === c0) own++;
+        const x = i % W;
+        const y = (i - x) / W;
+        const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+        for (const j of nb)
+          if (j >= 0 && !seen[j] && cont[j] === c0) {
+            seen[j] = 1;
+            stack.push(j);
+          }
+      }
+      if (own === 0)
+        for (const i of comp) {
+          cont[i] = 255;
+          S[i] = Math.min(S[i], -1);
+        }
+    }
+  }
   // Small enclosed pools of open sea (the Arabian Sea's pocket between Africa and Asia's halos) are printed
   // over too: a ring of outline round a puddle reads as a mark, not a sea.
   {
-    const maxPool = 36 * sF * sF;
+    const maxPool = 80 * sF * sF;
     const seen = new Uint8Array(N);
     const stack: number[] = [];
     const comp: number[] = [];
@@ -707,31 +771,130 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
             stack.push(j);
           }
       }
-      if (!edge && comp.length < maxPool) for (const i of comp) cont[i] = contOf[ids[A.near[i]]] ?? 255;
+      if (!edge && comp.length < maxPool)
+        for (const i of comp) {
+          cont[i] = contOf[ids[A.near[i]]] ?? 255;
+          S[i] = Math.max(S[i], 1);
+        }
     }
   }
-  // outline texels: inside a region, next to another region or open sea (or the board's edge: every
-  // printed region is closed)
-  const line = new Uint8Array(N);
+  await yieldFrame();
+  // sub-texel crossing points on every boundary between two texels, summed onto both texels
+  const px = new Float32Array(N);
+  const py = new Float32Array(N);
+  const pn = new Uint8Array(N);
+  const lineCont = new Uint8Array(N).fill(255);
+  const lx = (k: number) => k % W;
+  const ly = (k: number) => (k - (k % W)) / W;
+  const cross = (i: number, j: number) => {
+    const ci = cont[i];
+    const cj = cont[j];
+    let t = 0.5;
+    if (ci === 255 || cj === 255) {
+      const a = S[i];
+      const b = S[j];
+      if ((a > 0) !== (b > 0) && Math.abs(a - b) > 1e-6) t = a / (a - b);
+    } else {
+      // between two continents: where the two coasts are equally near (on land: the border, between the texels)
+      const xi = lx(i);
+      const yi = ly(i);
+      const xj = lx(j);
+      const yj = ly(j);
+      const ni = A.near[i];
+      const nj = A.near[j];
+      const gi = A.dist[i] - Math.hypot(xi - lx(nj), yi - ly(nj));
+      const gj = Math.hypot(xj - lx(ni), yj - ly(ni)) - A.dist[j];
+      if (gi < 0 && gj > 0) t = gi / (gi - gj);
+    }
+    t = Math.min(1, Math.max(0, t));
+    const x = lx(i) + (lx(j) - lx(i)) * t;
+    const y = ly(i) + (ly(j) - ly(i)) * t;
+    for (const k of [i, j]) {
+      px[k] += x;
+      py[k] += y;
+      if (pn[k] < 255) pn[k]++;
+      if (lineCont[k] === 255) lineCont[k] = ci !== 255 ? ci : cj;
+    }
+  };
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      const c = cont[i];
-      if (c === 255) continue;
-      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) line[i] = 1;
-      else if (cont[i - 1] !== c || cont[i + 1] !== c || cont[i - W] !== c || cont[i + W] !== c) line[i] = 1;
+      if (x < W - 1 && cont[i] !== cont[i + 1]) cross(i, i + 1);
+      if (y < H - 1 && cont[i] !== cont[i + W]) cross(i, i + W);
     }
-  const B = edt2d(line, W, H);
+  const lineIdx: number[] = [];
+  for (let i = 0; i < N; i++)
+    if (pn[i]) {
+      px[i] /= pn[i];
+      py[i] /= pn[i];
+      lineIdx.push(i);
+    }
+  // smooth the points along the line (two passes over their 8-neighbours): the pen's long, calm curve
+  const qx = new Float32Array(N);
+  const qy = new Float32Array(N);
+  for (let pass = 0; pass < 2; pass++) {
+    for (const i of lineIdx) {
+      const x = lx(i);
+      const y = ly(i);
+      let sx = 0;
+      let sy = 0;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const X = x + dx;
+          const Y = y + dy;
+          if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+          const j = Y * W + X;
+          if (!pn[j]) continue;
+          sx += px[j];
+          sy += py[j];
+          n++;
+        }
+      qx[i] = n ? 0.5 * px[i] + (0.5 * sx) / n : px[i];
+      qy[i] = n ? 0.5 * py[i] + (0.5 * sy) / n : py[i];
+    }
+    for (const i of lineIdx) {
+      px[i] = qx[i];
+      py[i] = qy[i];
+    }
+  }
+  const B = edt2d(pn, W, H);
   await yieldFrame();
   const out = new Uint8Array(N * 4);
   const dr = CONT_DR * sF;
+  const segD = (x: number, y: number, ax: number, ay: number, bx: number, by: number) => {
+    const vx = bx - ax;
+    const vy = by - ay;
+    const l = vx * vx + vy * vy;
+    const t = l > 1e-9 ? Math.min(1, Math.max(0, ((x - ax) * vx + (y - ay) * vy) / l)) : 0;
+    return Math.hypot(x - ax - vx * t, y - ay - vy * t);
+  };
   for (let i = 0; i < N; i++) {
     const o = i * 4;
-    // the outline texels sit on the inner side of the boundary: centre the line on it (half a texel out)
-    const d = Math.max(0, B.dist[i] + (cont[i] === 255 ? -0.5 : 0.5));
+    const f = B.near[i];
+    let d = dr;
+    if (B.dist[i] < dr + 2) {
+      const x = lx(i);
+      const y = ly(i);
+      const fx = lx(f);
+      const fy = ly(f);
+      d = Math.hypot(x - px[f], y - py[f]);
+      // the distance to the polyline through the nearest point and its neighbours on the line
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const X = fx + dx;
+          const Y = fy + dy;
+          if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+          const j = Y * W + X;
+          if (!pn[j]) continue;
+          d = Math.min(d, segD(x, y, px[f], py[f], px[j], py[j]));
+        }
+    }
     out[o] = Math.round(255 * Math.min(1, d / dr));
     out[o + 1] = cont[i];
-    out[o + 2] = cont[B.near[i]];
+    out[o + 2] = lineCont[f];
     out[o + 3] = 255;
   }
   const t = new THREE.DataTexture(out, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -740,7 +903,17 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
   t.generateMipmaps = false;
   t.flipY = false;
   t.needsUpdate = true;
-  return t;
+  // v6: the playable land's distance, for decorative land that fades out away from the board's own (audit F3)
+  const ld = new Uint8Array(N);
+  const ldr = LAND_DR * sF;
+  for (let i = 0; i < N; i++) ld[i] = Math.round(255 * Math.min(1, A.dist[i] / ldr));
+  const landDist = new THREE.DataTexture(ld, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+  landDist.magFilter = THREE.LinearFilter;
+  landDist.minFilter = THREE.LinearFilter;
+  landDist.generateMipmaps = false;
+  landDist.flipY = false;
+  landDist.needsUpdate = true;
+  return { tex: t, landDist };
 }
 
 // ---------------------------------------------------------------------------
@@ -889,7 +1062,7 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   // `cont` RGBA at field resolution: R = distance to the nearest outline (0 → 1 over CONT_DR units; linear, so
   // the shaders draw a smooth line of any weight), G = the continent this texel belongs to (land or halo;
   // 255 = open sea), B = the continent the nearest outline belongs to (a held one takes its holder's ink).
-  const contTex = await buildContinents(ids, fieldW, fieldH, sF, contOf, DECOR);
+  const { tex: contTex, landDist } = await buildContinents(ids, fieldW, fieldH, sF, contOf, DECOR);
   // [place v5] front lines (PROPOSAL §4 B): `cont` A = the territory across the nearest land border (0 = none:
   // a coast, or deeper inland than FRONT_REACH). The tile shaders compare its owner with their own, so a border
   // between two seats draws as the split Medium stroke (ink A) and one inside a seat's land stays the hairline.
@@ -1200,6 +1373,7 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
     ink: inkTex,
     field: fieldTex,
     cont: contTex,
+    landDist,
     noise,
     waves,
     waveRows,

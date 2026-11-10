@@ -39,6 +39,7 @@ import { IVORY, TILE_TOP, hexToRgb, type RGB } from './util';
 import { deepOf, type TileSet } from './tiles';
 import { loadTexmap } from './texmaps';
 import ATLAS from './unitsAtlas.json';
+import { PLAYER_COLORS, type SeatEmblem } from '../shared/palette';
 
 /** 0 = infantry (1–4), 1 = cavalry (5–9), 2 = artillery (10+): the figure standing on the stone. */
 export type Denom = 0 | 1 | 2;
@@ -88,8 +89,13 @@ export const NUM_AT: readonly [number, number] = [0.98, 0.8];
  */
 export const NUM_IN = 0.5;
 export const NUM_TOP = 0.36;
-export function numOffset(R: number, nw: number, nh: number, side = 1): [number, number] {
-  return [side * (NUM_IN * R + nw / 2), NUM_TOP * R + nh / 2];
+export function numOffset(R: number, nw: number, nh: number, side = 1, denom: Denom = 0, k = FIG_K): [number, number] {
+  // v6-board: the count is the hero mark, set level with the figure's feet just past its side (soldier: on the
+  // stone's right half; rider and cannon: beside them), like the touchstone's count beside its figure; it no
+  // longer hangs below the stone, so a crowded neighbour below keeps its room.
+  const half = figDims(denom, 2 * R, k)[0] / 2;
+  const x0 = Math.max(NUM_IN * R * 1.2, half * 0.9 + 1);
+  return [side * (x0 + nw / 2), FEET * R - 0.2 * nh];
 }
 /** The small soldier's opacity (the squint guard's lever: thinner than a rider, never a smaller stone). */
 export const SOLDIER_ALPHA = 0.85;
@@ -104,13 +110,17 @@ export function figDims(denom: Denom, d: number, k = FIG_K): [number, number] {
  * The numeral's smallest size, CSS px (× the text size): the v4 type scale's numeral floor (PLAN §5b E6, review
  * §1): 18 px at 1440 on desktop, 12 px on phones (TokenSystem.numMin, set per device by index.ts). Never squashed.
  */
-export const NUMERAL_MIN = 18;
-export const NUMERAL_MIN_PHONE = 12;
-/** The numeral's top size, CSS px (the type scale's 24 step), on the largest stones. */
-export const NUMERAL_MAX = 24;
-/** The numeral's height (CSS px at the home view) on a stone `d` px across: the floor, to ~22 on a 20+ stone. */
-export function numeralPxFor(d: number, s = 1, min = NUMERAL_MIN): number {
-  return Math.min(NUMERAL_MAX * s, Math.max(min * s, 0.3 * d + 9));
+export const NUMERAL_MIN = 22;
+export const NUMERAL_MIN_PHONE = 16;
+/** The numeral's top size, CSS px, on the largest stones (v6: the count is the hero mark, PLAN bet 2). */
+export const NUMERAL_MAX = 28;
+export const NUMERAL_MAX_PHONE = 20;
+/**
+ * The numeral's height (CSS px at the home view) on a stone `d` px across: the floor, growing with the stone
+ * to the top size. v6: `max` follows the floor when the board scales them per device (index.ts).
+ */
+export function numeralPxFor(d: number, s = 1, min = NUMERAL_MIN, max = min * (NUMERAL_MAX / NUMERAL_MIN)): number {
+  return Math.min(max * s, Math.max(min * s, 0.22 * d + min * 0.72));
 }
 /** The DOM numeral's box for a font size (as overlay.ts lays it out): [w, h]. */
 export function numeralBox(fs: number, digits: number): [number, number] {
@@ -127,7 +137,7 @@ export function pieceBoxes(n: number, d: number, s = 1, k = FIG_K, side = 1, num
   const feet = FEET * R;
   const fs = numeralPxFor(d, s, numMin);
   const [nw, nh] = numeralBox(fs, String(n).length);
-  const [cx, cy] = numOffset(R, nw, nh, side);
+  const [cx, cy] = numOffset(R, nw, nh, side, denomOf(n), k);
   return { stone: [-R, -R, R, R], fig: [-w / 2, feet - h, w / 2, feet], num: [cx - nw / 2, cy - nh / 2, cx + nw / 2, cy + nh / 2] };
 }
 /**
@@ -178,6 +188,10 @@ export function pieceEnvelope(cap: number, dmin: number, dmax: number, s = 1, k 
   return out!;
 }
 const MAX_TRAVELERS = 8;
+/** v6: the seat emblems in the order the stone shader draws them (index + 1; palette.ts SeatEmblem). */
+const EMBLEMS: readonly SeatEmblem[] = ['triangle', 'circle', 'square', 'diamond', 'star', 'cross', 'dash'];
+/** v6: the emblem's half-size on the stone's rim, CSS px at the home view (× emblemScale). */
+export const EMBLEM_PX = 4.6;
 /** The loser's ring (v4 A4): its centre line this many px outside the stone's edge at the home view. */
 const RING_GAP_PX = 3.5;
 /** The receipt pulse (v4 A3): one tier-0 swell, this long at 1×, the stone this much larger at its height. */
@@ -228,6 +242,10 @@ interface Tok {
   preview: number | null;
   /** v4 A4: the loser's ring colour (its pigment), or null. */
   ring: RGB | null;
+  /** v6: the seat emblem's index on the stone's rim (EMBLEM_INDEX + 1; 0 = none). */
+  emb: number;
+  /** v6: the capital's ring (its first holder's pigment), or null. */
+  cap: RGB | null;
   /** v4 A3: the receipt's pulse, 0..1 (a tier-0 swell of the stone). */
   swell: number;
   // --- the figure on the stone
@@ -261,6 +279,8 @@ interface Tok {
 interface Traveler extends TokenTraveler {
   /** Where it's going (its stone takes that territory's cap). */
   to: TerritoryId;
+  from: TerritoryId;
+  emb: number;
   col: RGB;
   deep: RGB;
   pts: THREE.Vector3[];
@@ -282,15 +302,20 @@ attribute vec4 iCol;
 attribute vec3 iDeep;
 attribute vec4 iFx;
 attribute vec4 iRing;
+attribute vec4 iEmb;
+attribute vec4 iCap;
 varying vec2 vP;
 varying vec4 vSize;
 varying vec4 vCol;
 varying vec3 vDeep;
 varying vec4 vFx;
 varying vec4 vRing;
+varying vec4 vEmb;
+varying vec4 vCap;
 void main() {
-  // (a loser's ring (v4 A4) sits a few px outside the stone: the quad grows to hold it)
-  float M = max(1.35, iRing.w + 0.3);
+  // (a loser's ring (v4 A4) sits a few px outside the stone, the capital's ring (v6) and the seat's emblem on its
+  // rim: the quad grows to hold them)
+  float M = max(max(1.35, iRing.w + 0.3), max(iCap.w + 0.15, iEmb.x > 0.5 ? 1.0 + iEmb.y * 1.4 : 0.0));
   float R = iSize.x;
   vP = position.xy * 2.0 * M;
   vec3 w = iPos + vec3(position.x * 2.0 * M * R + iFx.x, 0.0, -position.y * 2.0 * M * R + iFx.y);
@@ -299,12 +324,23 @@ void main() {
   vDeep = iDeep;
   vFx = iFx;
   vRing = iRing;
+  vEmb = iEmb;
+  vCap = iCap;
   gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
 }
 `;
 
 const STONE_FRAG = /* glsl */ `
 uniform sampler2D uNoise;
+uniform vec4 uHud;
+// v6: pieces fade out under the HUD's top strip and bottom dock (device px from the buffer's bottom: the
+// strip's lower edge, the dock's upper edge, the feather) instead of drawing over them when zoomed in
+float hudFade() {
+  if (uHud.z <= 0.0) return 1.0;
+  float y = gl_FragCoord.y;
+  return smoothstep(uHud.y, uHud.y + uHud.z, y) * (1.0 - smoothstep(uHud.x - uHud.z, uHud.x, y));
+}
+
 uniform vec3 uPaper;
 varying vec2 vP;
 varying vec4 vSize;
@@ -312,7 +348,33 @@ varying vec4 vCol;
 varying vec3 vDeep;
 varying vec4 vFx;
 varying vec4 vRing;
+varying vec4 vEmb;
+varying vec4 vCap;
 float nrm(float v) { return clamp((v - 0.22) * 1.8, 0.0, 1.0); }
+float sdBox(vec2 q, vec2 b) { vec2 d = abs(q) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+// v6: the seat's emblem (palette.ts EMBLEM_PATHS, the top strip's marks), unit-sized, north = +y
+float emblemSd(vec2 q, float e) {
+  if (e < 1.5) {
+    // triangle
+    const float k = 1.7320508;
+    q.y += 0.18;
+    float r = 0.82;
+    q.x = abs(q.x) - r;
+    q.y = q.y + r / k;
+    if (q.x + k * q.y > 0.0) q = vec2(q.x - k * q.y, -k * q.x - q.y) / 2.0;
+    q.x -= clamp(q.x, -2.0 * r, 0.0);
+    return -length(q) * sign(q.y);
+  }
+  if (e < 2.5) return length(q) - 0.74;
+  if (e < 3.5) return sdBox(q, vec2(0.66));
+  if (e < 4.5) return (abs(q.x) + abs(q.y) - 0.9) * 0.7071;
+  if (e < 5.5) {
+    float a = atan(q.y, q.x) - 1.5708;
+    return (length(q) - (0.6 + 0.3 * cos(5.0 * a))) * 0.62;
+  }
+  if (e < 6.5) return min(sdBox(q, vec2(0.84, 0.24)), sdBox(q, vec2(0.24, 0.84)));
+  return sdBox(q, vec2(0.84, 0.22));
+}
 // the stone's brushed wobble: a few low harmonics, fixed per territory
 float wob(vec2 p, float seed) {
   float a = atan(p.y, p.x);
@@ -339,7 +401,29 @@ void main() {
     vec4 rn = texture2D(uNoise, p * 0.31 + seed * 1.7);
     ringA = (1.0 - smoothstep(0.45, 1.15, rd)) * (0.78 + 0.22 * nrm(rn.r)) * vCol.a * (1.0 - dry);
   }
-  if (inside < 0.004 && shadow < 0.004 && ringA < 0.004) discard;
+  // v6 the capital: a second brushed rim just outside the stone (a hair of paper between), in its first
+  // holder's pigment; the pen swells and dries a little round it, like the coasts
+  float capA = 0.0;
+  if (vCap.w > 0.0) {
+    vec4 cn = texture2D(uNoise, p * 0.23 + seed * 2.3);
+    float cw = 1.55 + 0.4 * (nrm(cn.g) - 0.5);
+    float cd = abs(d - (1.0 + 3.8 * fw)) / fw;
+    capA = (1.0 - smoothstep(cw - 0.5, cw + 0.5, cd)) * (0.82 + 0.18 * nrm(cn.r)) * vCol.a * (1.0 - dry);
+  }
+  // v6 the seat's emblem on the stone's upper-left rim (colour-blind backup): an ivory hairline mark on a
+  // pool of the seat's deep ink, the size of the top strip's
+  float embS = 0.0;
+  float embF = 0.0;
+  if (vEmb.x > 0.5) {
+    // (opposite the count: upper-left, or upper-right when the count sits at the stone's left)
+    vec2 ec = vec2(-0.74 * (vEmb.w < 0.0 ? -1.0 : 1.0), 0.62);
+    vec2 q = (p - ec) / vEmb.y;
+    float sd = emblemSd(q, vEmb.x);
+    float ew = fw / vEmb.y;
+    embS = (1.0 - smoothstep(0.55 * ew, 1.25 * ew, abs(sd))) * vEmb.z;
+    embF = (1.0 - smoothstep(-0.2 * ew, 0.6 * ew, sd - 0.28)) * vEmb.z;
+  }
+  if (inside < 0.004 && shadow < 0.004 && ringA < 0.004 && capA < 0.004 && embF < 0.004) discard;
   // the fill: a flat wash of the seat's base (a hair of paper grain, like every wash on the board)
   vec4 nz = texture2D(uNoise, p * 0.18 + seed);
   // (more pigment than the territory's own wash: the same colour, laid on thicker, so the stone stands off it)
@@ -375,8 +459,18 @@ void main() {
   float outA = a + sa * (1.0 - a);
   outC += vRing.rgb * ringA * (1.0 - outA);
   outA += ringA * (1.0 - outA);
+  outC += vCap.rgb * capA * (1.0 - outA);
+  outA += capA * (1.0 - outA);
+  // the emblem over all: its dark pool, then the ivory line
+  float ef = embF * 0.6 * (1.0 - dry) * (1.0 - 0.8 * ghost);
+  outC = vDeep * 0.45 * ef + outC * (1.0 - ef);
+  outA = outA + ef * (1.0 - outA);
+  float es = embS * 0.88 * (1.0 - dry) * (1.0 - 0.8 * ghost) * vCol.a;
+  outC = outC * (1.0 - es) + vec3(0.93, 0.91, 0.86) * es;
+  outA = outA + es * (1.0 - outA);
   if (outA < 0.004) discard;
-  gl_FragColor = vec4(outC, outA);
+  float hf = hudFade();
+  gl_FragColor = vec4(outC, outA) * hf;
 }
 `;
 
@@ -420,6 +514,15 @@ void main() {
 
 const FIG_FRAG = /* glsl */ `
 uniform sampler2D uAtlas;
+uniform vec4 uHud;
+// v6: pieces fade out under the HUD's top strip and bottom dock (device px from the buffer's bottom: the
+// strip's lower edge, the dock's upper edge, the feather) instead of drawing over them when zoomed in
+float hudFade() {
+  if (uHud.z <= 0.0) return 1.0;
+  float y = gl_FragCoord.y;
+  return smoothstep(uHud.y, uHud.y + uHud.z, y) * (1.0 - smoothstep(uHud.x - uHud.z, uHud.x, y));
+}
+
 uniform sampler2D uNoise;
 uniform sampler2D uSmoke;
 uniform float uSmokeOn;
@@ -506,7 +609,7 @@ void main() {
   a *= vA.x * (1.0 - 0.12 * dim);
   col *= 1.0 - 0.15 * dim;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(col * a, a);
+  gl_FragColor = vec4(col * a, a) * hudFade();
 }
 `;
 
@@ -530,6 +633,15 @@ void main() {
 
 const BLOT_FRAG = /* glsl */ `
 uniform sampler2D uNoise;
+uniform vec4 uHud;
+// v6: pieces fade out under the HUD's top strip and bottom dock (device px from the buffer's bottom: the
+// strip's lower edge, the dock's upper edge, the feather) instead of drawing over them when zoomed in
+float hudFade() {
+  if (uHud.z <= 0.0) return 1.0;
+  float y = gl_FragCoord.y;
+  return smoothstep(uHud.y, uHud.y + uHud.z, y) * (1.0 - smoothstep(uHud.x - uHud.z, uHud.x, y));
+}
+
 varying vec2 vP;
 varying vec4 vCol;
 varying vec2 vK;
@@ -551,7 +663,7 @@ void main() {
   }
   a *= vCol.a;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(vCol.rgb * a, a);
+  gl_FragColor = vec4(vCol.rgb * a, a) * hudFade();
 }
 `;
 
@@ -673,6 +785,22 @@ export class TokenSystem {
   dmaxPx = 36;
   /** The numeral's smallest size at home, CSS px (13; phones 11). */
   numMin = NUMERAL_MIN;
+  /** v6: the emblem's size multiplier (index.ts: the device's piece scale). */
+  emblemScale = 1;
+  /** v6: the HUD bands the pieces fade under (setHudBands). */
+  private hud = { value: new THREE.Vector4(0, 0, 0, 0) };
+  /**
+   * v6: the HUD's top strip and bottom dock, CSS px from the canvas's top and bottom: pieces fade out over
+   * `feather` px as they pass under either, rather than drawing over the HUD at a deep zoom. `dpr` = the
+   * canvas's pixel ratio; `bufferH` its drawing-buffer height.
+   */
+  setHudBands(top: number, bottom: number, bufferH: number, dpr: number, feather = 14): void {
+    if (top <= 0 && bottom <= 0) {
+      this.hud.value.set(0, 0, 0, 0);
+      return;
+    }
+    this.hud.value.set(bufferH - top * dpr, bottom * dpr, feather * dpr, 1);
+  }
   pxUnit = 1 / 12.7;
   /** Kept for callers of the old stack API: the disc size fields. */
   discPx = 36;
@@ -694,6 +822,8 @@ export class TokenSystem {
   private numSide = new Map<TerritoryId, number>();
   /** Called as a placed army's wash first touches the stone (the wood click). */
   onContact: ((id: TerritoryId) => void) | null = null;
+  /** v6: called as a traveller lands on its stone (occupy, fortify): the count that arrived. A sound hook. */
+  onLand: ((id: TerritoryId, arrived: number) => void) | null = null;
 
   constructor(
     private anim: Animator,
@@ -711,7 +841,7 @@ export class TokenSystem {
       toneMapped: false,
     } as const;
     this.stoneMat = new THREE.ShaderMaterial({
-      uniforms: { uNoise: { value: noise ?? null }, uPaper: { value: new THREE.Vector3(0.063, 0.102, 0.188) } },
+      uniforms: { uNoise: { value: noise ?? null }, uPaper: { value: new THREE.Vector3(0.063, 0.102, 0.188) }, uHud: this.hud },
       vertexShader: STONE_VERT,
       fragmentShader: STONE_FRAG,
       ...common,
@@ -724,13 +854,14 @@ export class TokenSystem {
         uSmokeOn: { value: 0 },
         uIvory: { value: new THREE.Vector3(IVORY_RGB[0], IVORY_RGB[1], IVORY_RGB[2]) },
         uAtlasPx: { value: new THREE.Vector2(ATLAS.width, ATLAS.height) },
+        uHud: this.hud,
       },
       vertexShader: FIG_VERT,
       fragmentShader: FIG_FRAG,
       ...common,
     });
     this.blotMat = new THREE.ShaderMaterial({
-      uniforms: { uNoise: { value: noise ?? null } },
+      uniforms: { uNoise: { value: noise ?? null }, uHud: this.hud },
       vertexShader: BLOT_VERT,
       fragmentShader: BLOT_FRAG,
       ...common,
@@ -744,7 +875,7 @@ export class TokenSystem {
         this.dirty = true;
       });
     const flat = new THREE.PlaneGeometry(1, 1);
-    const stoneSpec = { iPos: 3, iSize: 4, iCol: 4, iDeep: 3, iFx: 4, iRing: 4 };
+    const stoneSpec = { iPos: 3, iSize: 4, iCol: 4, iDeep: 3, iFx: 4, iRing: 4, iEmb: 4, iCap: 4 };
     const figSpec = { iPos: 3, iSize: 2, iUV: 4, iA: 4, iB: 4, iC: 4, iOff: 2 };
     const blotSpec = { iPos: 3, iR: 3, iCol: 4, iK: 2 };
     this.stones = new Instanced(flat, stoneSpec, STONE_CAP, this.stoneMat);
@@ -808,6 +939,8 @@ export class TokenSystem {
         soak: 0,
         preview: null,
         ring: null,
+        emb: 0,
+        cap: null,
         swell: 0,
         fig: 0,
         denom: 0,
@@ -900,8 +1033,13 @@ export class TokenSystem {
     return deepOf(tile);
   }
 
-  setColor(id: TerritoryId, tileColor: RGB, edgeColor?: RGB | null): void {
+  setColor(id: TerritoryId, tileColor: RGB, edgeColor?: RGB | null, emblem?: SeatEmblem | null): void {
     const t = this.toks.get(id)!;
+    // v6: the owner's emblem rides on the stone's rim (colour-blind backup); kept when the caller doesn't say
+    if (emblem !== undefined) {
+      const e = emblem ? EMBLEMS.indexOf(emblem) + 1 : 0;
+      if (e !== t.emb) t.emb = e;
+    }
     // v4 E4: the 1 px edge takes the palette's `edge` ink when the seat has one (≥ 25 % off its wash)
     const c = { col: lacquer(tileColor), deep: edgeColor ?? deepOf(tileColor) };
     if (t.frozen) t.pendingColor = c;
@@ -1248,6 +1386,7 @@ export class TokenSystem {
         this.onContact?.(id);
         this.resize(t, t.n, 180, run, 0.04);
         this.tw(t, 'soak', { ms: 200, update: (v) => (t.soak = Math.sin(v * Math.PI) * (1 - v * 0.4)), done: () => (t.soak = 0) });
+        this.settle(t, t.n - prev, 220);
         break;
       case 'lift':
         this.resize(t, t.n, o.unplace ? 170 : 150, run);
@@ -1259,8 +1398,11 @@ export class TokenSystem {
         this.tw(t, 'soak', { ms: 240, update: (v) => (t.soak = 0.7 * Math.sin(v * Math.PI)), done: () => (t.soak = 0) });
         break;
       case 'land':
-        // the traveller's stone and figure become this one: it settles, it doesn't grow again
+        // the traveller's stone and figure become this one: it lands with its weight (a settle that scales with
+        // what arrived), it doesn't grow again
         this.resize(t, t.n, 160, run, 0.03);
+        this.settle(t, t.n - Math.max(0, prev), 240);
+        this.onLand?.(id, t.n - Math.max(0, prev));
         break;
     }
     const nd = denomOf(t.n);
@@ -1272,6 +1414,28 @@ export class TokenSystem {
       this.tw(t, 'figOld', { ms: 120, update: (v) => (t.figOld ? (t.figOld.dry = v) : undefined), done: () => (t.figOld = null) });
       this.tw(t, 'reveal', { ms: 120, delay: 40, ease: (x) => 1 - Math.pow(1 - x, 1.6), update: (v) => (t.reveal = v), done: () => (t.reveal = 1) });
     }
+  }
+
+  /**
+   * v6 "mass lands": the stone gives under what arrived and settles back, the beat scaling with the count (12 is
+   * not 1): one swell for a few, a swell and a smaller second beat past five. Inside `ms`, never blocking.
+   */
+  private settle(t: Tok, arrived: number, ms: number): void {
+    if (arrived <= 0 || this.reduced || this.anim.instant) return;
+    const k = Math.min(1, (arrived - 1) / 11);
+    const amp = 0.45 + 0.75 * k;
+    const two = arrived >= 5;
+    this.tw(t, 'swell', {
+      ms,
+      ease: ease.linear,
+      update: (v) => {
+        // a quick give (outQuad up to the peak at 30 %), then a damped settle; a big arrival rebounds once more
+        const a = v < 0.3 ? ease.outQuad(v / 0.3) : 1 - ease.inOutQuad((v - 0.3) / 0.7);
+        const b = two && v > 0.55 ? 0.35 * Math.sin(((v - 0.55) / 0.45) * Math.PI) : 0;
+        t.swell = amp * (a + b);
+      },
+      done: () => (t.swell = 0),
+    });
   }
 
   /** The figure as the count stands now, with nothing in flight (no smoke, no swap). */
@@ -1299,6 +1463,25 @@ export class TokenSystem {
         this.dirty = true;
       }
     }
+  }
+  /**
+   * v6 capitals: each listed territory's stone wears a second brushed rim in its capital's first holder's pigment,
+   * permanently (it stays theirs to see after a capture). An empty map clears them.
+   */
+  setCapitals(caps: Map<TerritoryId, RGB>): void {
+    for (const t of this.list) {
+      const c = caps.get(t.id) ?? null;
+      const same = c === t.cap || (c && t.cap && c[0] === t.cap[0] && c[1] === t.cap[1] && c[2] === t.cap[2]);
+      if (!same) {
+        t.cap = c;
+        this.dirty = true;
+      }
+    }
+  }
+  /** Test hook: a stone's capital rim (rgb) and its emblem index (0 = none). */
+  marksOf(id: TerritoryId): { cap: RGB | null; emblem: number } {
+    const t = this.toks.get(id)!;
+    return { cap: t.cap, emblem: t.emb };
   }
   /** Test hook: the ring a stone wears (its rgb) or null. */
   ringOf(id: TerritoryId): RGB | null {
@@ -1369,6 +1552,11 @@ export class TokenSystem {
       halfW: this.radiusFor(count, to),
       numH: 1,
       to,
+      from,
+      emb: (() => {
+        const pl = (PLAYER_COLORS as Record<string, { emblem: SeatEmblem } | undefined>)[owner];
+        return pl ? EMBLEMS.indexOf(pl.emblem) + 1 : 0;
+      })(),
       alive: true,
       col: lacquer(tileColor),
       deep: deepOf(tileColor),
@@ -1412,7 +1600,7 @@ export class TokenSystem {
 
   // --- per frame ----------------------------------------------------------------------------------
 
-  private writeStone(pos: THREE.Vector3, R: number, col: RGB, deep: RGB, alpha: number, o: { seed?: number; ghost?: boolean; dry?: number; soak?: number; dim?: number; ring?: RGB | null } = {}): void {
+  private writeStone(pos: THREE.Vector3, R: number, col: RGB, deep: RGB, alpha: number, o: { seed?: number; ghost?: boolean; dry?: number; soak?: number; dim?: number; ring?: RGB | null; emb?: number; cap?: RGB | null; side?: number } = {}): void {
     const s = this.stones;
     if (!s.next() || alpha <= 0.002 || R <= 0) return;
     s.set('iPos', pos.x, pos.y, pos.z);
@@ -1421,8 +1609,15 @@ export class TokenSystem {
     s.set('iDeep', deep[0], deep[1], deep[2]);
     s.set('iFx', 0, 0, o.soak ?? 0, o.dim ?? 0);
     // the ring's radius in stone radii: 3.5 px clear of the edge at the home view (RING_GAP_PX)
-    if (o.ring) s.set('iRing', o.ring[0], o.ring[1], o.ring[2], 1 + RING_GAP_PX / Math.max(1, R / this.pxUnit));
+    const Rpx = Math.max(1, R / this.pxUnit);
+    if (o.ring) s.set('iRing', o.ring[0], o.ring[1], o.ring[2], 1 + (o.cap ? RING_GAP_PX + 4 : RING_GAP_PX) / Rpx);
     else s.set('iRing', 0, 0, 0, 0);
+    // v6: the emblem's half-size, in stone radii (EMBLEM_PX at the home view, a little smaller on a small stone)
+    const ep = Math.min(EMBLEM_PX * this.emblemScale, 0.42 * Rpx);
+    if (o.emb && !o.ghost) s.set('iEmb', o.emb, ep / Rpx, 1, o.side ?? 1);
+    else s.set('iEmb', 0, 0, 0, 0);
+    if (o.cap && !o.ghost) s.set('iCap', o.cap[0], o.cap[1], o.cap[2], 1 + 6.2 / Rpx);
+    else s.set('iCap', 0, 0, 0, 0);
     s.push();
   }
 
@@ -1454,11 +1649,11 @@ export class TokenSystem {
    * Where the numeral's centre sits for a stone of radius R at c (world): straddling the lower-right edge
    * (numOffset), for a numeral `numH` tall (world) with `digits` digits.
    */
-  private numAt(c: THREE.Vector3, R: number, out: THREE.Vector3, side: number, numH: number, digits: number): THREE.Vector3 {
+  private numAt(c: THREE.Vector3, R: number, out: THREE.Vector3, side: number, numH: number, digits: number, denom: Denom = 0, k = FIG_K): THREE.Vector3 {
     const g = this.upG;
     const px = this.pxUnit;
     const [nw, nh] = numeralBox(numH / px, digits);
-    const [x, y] = numOffset(R / px, nw, nh, side).map((v) => v * px);
+    const [x, y] = numOffset(R / px, nw, nh, side, denom, k).map((v) => v * px);
     return out.set(c.x + this.right.x * x - g.x * y, c.y, c.z + this.right.z * x - g.z * y);
   }
 
@@ -1504,10 +1699,10 @@ export class TokenSystem {
       const Rs = t.shown > 0 ? Math.max(R, Rn * 0.5) : R;
       t.halfW = Rs;
       t.numH = numeralPxFor((2 * Rn) / px, ss, this.numMin) * px;
-      this.numAt(this.p, Rs, t.figTop, this.numSide.get(t.id) ?? 1, t.numH, String(Math.max(1, t.shown)).length);
+      this.numAt(this.p, Rs, t.figTop, this.numSide.get(t.id) ?? 1, t.numH, String(Math.max(1, t.shown)).length, denomOf(Math.max(1, t.shown)), this.figKOf(t.id));
       const dim = tile.dim;
       const ghost = t.preview !== null && t.preview !== t.shown && t.preview > 0 ? t.preview : 0;
-      if (R > 0 && t.alpha > 0.002) this.writeStone(this.p, R, colors.col, colors.deep, t.alpha, { seed: t.seed, dry: t.dry, soak: Math.max(t.soak, 0.5 * t.swell), dim, ring: t.ring });
+      if (R > 0 && t.alpha > 0.002) this.writeStone(this.p, R, colors.col, colors.deep, t.alpha, { seed: t.seed, dry: t.dry, soak: Math.max(t.soak, 0.5 * t.swell), dim, ring: t.ring, emb: t.emb, cap: t.cap, side: this.numSide.get(t.id) ?? 1 });
       if (ghost) this.writeStone(this.p, this.radiusFor(ghost, t.id), t.col, t.deep, 1, { seed: t.seed, ghost: true, dim });
       // the figure standing on the stone: sized with the stone as drawn (it swells with it), fading up as a
       // new stone grows, drying with it, gone to smoke at 0
@@ -1518,6 +1713,13 @@ export class TokenSystem {
       t.ext[0] = t.ext[2] = t.fig > 0.002 ? Math.max(Rs, fw / 2) : Rs;
       t.ext[1] = t.fig > 0.002 ? Math.max(Rs, fh - FEET * Rs) : Rs;
       t.ext[3] = Rs;
+      if (t.emb && t.shown > 0) {
+        // v6: the emblem on the upper-left rim belongs to the piece (names keep clear of it)
+        const ep = Math.min(EMBLEM_PX * this.emblemScale * px, 0.42 * Rs);
+        if ((this.numSide.get(t.id) ?? 1) < 0) t.ext[2] = Math.max(t.ext[2], 0.74 * Rs + ep);
+        else t.ext[0] = Math.max(t.ext[0], 0.74 * Rs + ep);
+        t.ext[1] = Math.max(t.ext[1], 0.62 * Rs + ep);
+      }
       // (a preview in the same band keeps the real figure; one that changes the band shows the new figure as
       // a ghost in its place — never two figures on one stone)
       if (ghost && (t.shown <= 0 || denomOf(ghost) !== t.denom)) {
@@ -1545,13 +1747,14 @@ export class TokenSystem {
       this.p.y = TILE_TOP;
       tr.top.copy(this.p);
       tr.plaque.copy(this.p);
-      tr.halfW = this.radiusFor(tr.n, tr.to);
+      // v6: the traveller keeps its stone's scale and weight (the larger of its two caps), it never shrinks to a token
+      tr.halfW = Math.max(this.radiusFor(tr.n, tr.to), this.radiusFor(tr.n, tr.from));
       tr.numH = numeralPxFor((2 * tr.halfW) / px, ss, this.numMin) * px;
-      this.numAt(this.p, tr.halfW, tr.figTop, this.numSide.get(tr.to) ?? 1, tr.numH, String(Math.max(1, tr.n)).length);
+      this.numAt(this.p, tr.halfW, tr.figTop, this.numSide.get(tr.to) ?? 1, tr.numH, String(Math.max(1, tr.n)).length, tr.denom, this.figKOf(tr.to));
       const fadeIn = Math.min(1, tr.t * 10);
       // the stone and its figure travel together
       const R = tr.halfW;
-      this.writeStone(this.p, R, tr.col, tr.deep, fadeIn, { seed: tr.seed });
+      this.writeStone(this.p, R, tr.col, tr.deep, fadeIn, { seed: tr.seed, emb: tr.emb, side: this.numSide.get(tr.to) ?? 1 });
       const tk = this.figKOf(tr.to);
       const [fw] = figDims(tr.denom, 2 * R, tk);
       this.writeFeet(this.p, R, fw, tr.deep, 0.42 * fadeIn, tr.seed);

@@ -12,6 +12,7 @@ import { Animator, ease, type Run } from './anim';
 import { INK_COAST, hexToRgb, mixRgb, setColor, toWorld, type RGB } from './util';
 import type { SharedUniforms } from './inkGlsl';
 import type { InkLayer } from './ink';
+import type { TileSet } from './tiles';
 
 export const FONT_SERIF = "'Cormorant Garamond Variable', 'Cormorant Garamond', Georgia, serif";
 void INK_COAST;
@@ -22,6 +23,8 @@ void INK_COAST;
 const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72, MAP.continentIds.length));
 /** Label opacity: unheld labels are Layer 1 at rest (lead round 2: a touch quieter); a held one a little stronger. */
 const LABEL_A = 0.8;
+/** v6: how far past the continent's farthest corner the drain runs (board units), so it finishes clean. */
+const CONT_REACH_PAD = 2.5;
 const HELD_LABEL_A = 0.9;
 
 interface Cont {
@@ -90,9 +93,11 @@ export class Continents {
   reducedMotion = false;
   private rooms = new Map<ContinentId, number>();
   private anchors = new Map<ContinentId, THREE.Vector3>();
+  /** v6: the tiles, for the take's wash pulse (index.ts sets it; without it the take only re-inks the line). */
+  tiles: TileSet | null = null;
 
   constructor(
-    g: BoardGeometry,
+    private g: BoardGeometry,
     private anim: Animator,
     private shared: SharedUniforms,
     ink: InkLayer,
@@ -144,6 +149,11 @@ export class Continents {
     if (!pal) return null;
     return mixRgb(hexToRgb(pal.base), hexToRgb(pal.light), 0.45);
   }
+  /** v6: a held continent's printed label ("ASIA · +7") takes its holder's pigment, lifted to read on the sea. */
+  private labelFor(state: GameState | null, holder: PlayerId, ci: number): RGB {
+    const pal = holder >= 0 && state?.players[holder] ? PLAYER_COLORS[state.players[holder].color] : null;
+    return pal ? mixRgb(hexToRgb(pal.base), hexToRgb(pal.light), 0.62) : tintOf(ci);
+  }
   /** Test hook: each continent's holder and whether its outline is inked in the holder's colour. */
   state(): Record<string, { holder: PlayerId; amount: number; color: [number, number, number] }> {
     const out: Record<string, { holder: PlayerId; amount: number; color: [number, number, number] }> = {};
@@ -168,7 +178,7 @@ export class Continents {
       const prevHolder = c.holder;
       c.holder = holder;
       const ink = this.inkFor(state, holder);
-      const toLabel: RGB = tintOf(c.ci);
+      const toLabel: RGB = this.labelFor(state, holder, c.ci);
       const toLabelA = ink ? HELD_LABEL_A : LABEL_A;
       const from = { l: c.labelRgb, la: c.labelA, a: c.amount };
       const ver = ++c.ver;
@@ -188,7 +198,41 @@ export class Continents {
         c.amount = toA;
       }
       if (snap || prevHolder === -2) step(1);
-      else void this.anim.tween({ ms: 300, ease: ease.inOutQuad, update: step });
+      else if (!ink && prevHolder >= 0 && c.amount > 0.001 && !this.anim.instant && !this.reducedMotion) {
+        // v6 a broken hold: the holder's ink drains out of the outline from the broken territory (the existing
+        // 300 ms), the label going back to its own tint with it
+        const broken = ts.find((t) => owners[t] !== prevHolder);
+        const at = broken ? this.g.territories[broken].anchor : this.shared.uContSweep.value[c.ci];
+        const o: [number, number] = Array.isArray(at) ? [at[0], at[1]] : [(at as THREE.Vector4).x, (at as THREE.Vector4).y];
+        let far = 0;
+        for (const t of ts) {
+          const b = this.g.territories[t].bbox;
+          for (const [x, y] of [[b[0], b[1]], [b[2], b[1]], [b[0], b[3]], [b[2], b[3]]]) far = Math.max(far, Math.hypot(x - o[0], y - o[1]));
+        }
+        far += CONT_REACH_PAD;
+        const dn = this.shared.uContDrain.value[c.ci];
+        dn.set(o[0], o[1], 0, 1);
+        const a0 = c.amount;
+        void this.anim.tween({
+          ms: 300,
+          ease: ease.inOutQuad,
+          update: (v) => {
+            if (c.ver !== ver) return;
+            dn.z = far * v;
+            c.labelRgb = mixRgb(from.l, toLabel, v);
+            c.labelA = from.la + (toLabelA - from.la) * v;
+            c.amount = v >= 1 ? 0 : a0;
+            this.apply(c);
+          },
+          done: () => {
+            dn.w = 0;
+            if (c.ver === ver) {
+              c.amount = 0;
+              this.apply(c);
+            }
+          },
+        });
+      } else void this.anim.tween({ ms: 300, ease: ease.inOutQuad, update: step });
     }
   }
 
@@ -212,11 +256,22 @@ export class Continents {
       return;
     }
     c.sweep = 0;
-    const tint = tintOf(c.ci);
+    const tint = this.labelFor(state, holder, c.ci);
+    const fromL = c.labelRgb;
     const fromA = c.labelA;
+    this.shared.uContDrain.value[c.ci].w = 0;
     this.apply(c);
-    // the outline re-inks round the continent; the label's "+N" brightens (toward ivory, full strength) and
-    // settles to its held weight as the stroke closes
+    // v6: the take is visible — each territory's wash pulses as the stroke reaches it (clockwise from north,
+    // the sweep's own order), inside the same 600 ms
+    const ctr = this.shared.uContSweep.value[c.ci];
+    const angOf = (t: TerritoryId) => {
+      const a = this.g.territories[t].anchor;
+      return ((Math.atan2(a[0] - ctr.x, a[1] - ctr.y) / (2 * Math.PI)) % 1 + 1) % 1; // (the shader's angle)
+    };
+    const pulses = this.tiles ? MAP.continents[id].territories.map((t) => ({ t, at: angOf(t), done: false })) : [];
+    const boost = this.shared.uContBoost.value;
+    // the outline re-inks round the continent, heavier for the moment; the label takes the holder's pigment as
+    // its "+N" brightens (toward ivory, full strength) and settles to its held weight as the stroke closes
     await this.anim.tween({
       ms: 600,
       ease: ease.inOutSine,
@@ -225,16 +280,44 @@ export class Continents {
         if (c.ver !== ver) return;
         c.sweep = v;
         const glow = Math.sin(Math.PI * Math.min(1, v * 1.25));
-        c.labelRgb = mixRgb(tint, [0.95, 0.93, 0.89], 0.5 * glow);
+        c.labelRgb = mixRgb(mixRgb(fromL, tint, Math.min(1, v * 1.6)), [0.95, 0.93, 0.89], 0.45 * glow);
         c.labelA = Math.min(1, fromA + (HELD_LABEL_A - fromA) * v + 0.3 * glow);
+        boost[c.ci] = 0.9 * Math.sin(Math.PI * v);
         this.apply(c);
+        for (const p of pulses) {
+          if (p.done || v < p.at * 0.75) continue;
+          p.done = true;
+          this.pulseWash(p.t);
+        }
       },
     });
+    boost[c.ci] = 0;
     if (c.ver === ver) {
       c.labelRgb = tint;
       c.labelA = HELD_LABEL_A;
       this.apply(c);
     }
+  }
+
+  /** v6: one territory's wash lifts and settles (the take's pulse), 260 ms, never blocking. */
+  private pulseWash(id: TerritoryId): void {
+    const tile = this.tiles?.get(id);
+    if (!tile) return;
+    const ver = (tile.ver.flash = (tile.ver.flash ?? 0) + 1);
+    void this.anim.tween({
+      ms: 260,
+      ease: ease.linear,
+      update: (v) => {
+        if (tile.ver.flash !== ver) return;
+        tile.flash = Math.max(0, Math.sin(Math.PI * v)) * (v < 0.4 ? 1.6 : 1.6 * (1 - (v - 0.4) * 0.5));
+        tile.dirty = true;
+      },
+      done: () => {
+        if (tile.ver.flash !== ver) return;
+        tile.flash = 0;
+        tile.dirty = true;
+      },
+    });
   }
 
   /**
