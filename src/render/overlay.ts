@@ -157,7 +157,7 @@ export class Overlay {
   /** 0..1: how far a box's centre line is clear of the HUD bands (1 = clear, 0 = under one). */
   private hudClear(y0: number, y1: number): number {
     const [t, b] = this.hudBands;
-    const f = 26;
+    const f = 64;
     const yc = (y0 + y1) / 2;
     const top = t > 0 ? Math.min(1, Math.max(0, (yc - t) / f)) : 1;
     const bot = b > 0 ? Math.min(1, Math.max(0, (this.height - b - yc) / f)) : 1;

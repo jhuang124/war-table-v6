@@ -75,9 +75,9 @@ export const recipe: MapRecipe = {
     allston_brighton: [-71.185, 42.335],
     roxbury_dorchester: [-71.02, 42.29],
     // v6-board: the Southwest's name beside its own shore (it sat out in open water) and the Harbour's off
-    // the islands' coast (it printed over it)
+    // the islands' coast (it printed over it), a little east of where it was
     southwest: [-71.19, 42.262],
-    harbour: [-70.935, 42.395],
+    harbour: [-70.965, 42.388],
   },
   oceanLabels: [
     { text: 'BOSTON HARBOR', hint: [-70.98, 42.33], size: 1.0 },

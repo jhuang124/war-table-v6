@@ -95,7 +95,8 @@ export function numOffset(R: number, nw: number, nh: number, side = 1, denom: De
   // longer hangs below the stone, so a crowded neighbour below keeps its room.
   const half = figDims(denom, 2 * R, k)[0] / 2;
   const x0 = Math.max(NUM_IN * R * 1.2, half * 0.9 + 1);
-  return [side * (x0 + nw / 2), FEET * R - 0.2 * nh];
+  // (side 2: the same right side, half a count lower, the first step when a neighbour crowds it; −1: the left)
+  return [Math.sign(side) * (x0 + nw / 2), FEET * R - 0.2 * nh + (side === 2 ? 0.55 * nh : 0)];
 }
 /** The small soldier's opacity (the squint guard's lever: thinner than a rider, never a smaller stone). */
 export const SOLDIER_ALPHA = 0.85;
@@ -155,15 +156,12 @@ export function boxesHit(a: PxBox, b: PxBox, air = PIECE_AIR): boolean {
  * part of one over the other's numeral) or two figures would stand on each other. A stone over a neighbour's
  * stone or border is allowed: a big army spreads past its border.
  */
-export function piecesClash(A: { stone: PxBox; fig: PxBox; num: PxBox }, B: { stone: PxBox; fig: PxBox; num: PxBox }, air = PIECE_AIR): boolean {
-  return (
-    boxesHit(A.num, B.num, air) ||
-    boxesHit(A.num, B.fig, air) ||
-    boxesHit(A.num, B.stone, air) ||
-    boxesHit(A.fig, B.num, air) ||
-    boxesHit(A.stone, B.num, air) ||
-    boxesHit(A.fig, B.fig, air)
-  );
+export function piecesClash(A: { stone: PxBox; fig: PxBox; num: PxBox }, B: { stone: PxBox; fig: PxBox; num: PxBox }, air = PIECE_AIR, crowdedFig = false): boolean {
+  // (v6-board: a count may lie over the rim of a neighbour's stone — its ink pool keeps it legible — so counts
+  // stay on one side instead of flipping stone by stone; only a count over a count or a figure clashes)
+  // (and on a crowded board a count may cross a neighbour's figure's edge too: its ink pool keeps it on top and
+  // legible, which reads better than counts scattered to both sides)
+  return boxesHit(A.num, B.num, air) || boxesHit(A.fig, B.fig, air) || (crowdedFig ? false : boxesHit(A.num, B.fig, air) || boxesHit(A.fig, B.num, air));
 }
 const grow = (a: PxBox, b: PxBox): PxBox => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
 /**
@@ -537,7 +535,9 @@ float nrm(float v) { return clamp((v - 0.22) * 1.8, 0.0, 1.0); }
 // the drawing at a point of the sprite (0..1 both ways; nothing outside it)
 vec4 samp(vec2 q) {
   // (two atlas texels in from the sprite's box: the crop leaves a faint frame on its very edge)
-  vec2 e = 2.0 / max(abs(vec2(vUV.z - vUV.x, vUV.w - vUV.y)) * uAtlasPx, vec2(1.0));
+  // (v6-board: and at least a screen pixel and a half, so a small figure's mip levels don't bleed the
+  // neighbouring sprite into a faint box round it — Ural's cannon)
+  vec2 e = max(2.0 / max(abs(vec2(vUV.z - vUV.x, vUV.w - vUV.y)) * uAtlasPx, vec2(1.0)), fwidth(q) * 1.5);
   if (q.x < e.x || q.x > 1.0 - e.x || q.y < e.y || q.y > 1.0 - e.y) return vec4(0.0);
   float fx = vB.y < 0.0 ? 1.0 - q.x : q.x;
   return texture2D(uAtlas, vec2(mix(vUV.x, vUV.z, fx), mix(vUV.y, vUV.w, q.y)));
@@ -787,6 +787,17 @@ export class TokenSystem {
   numMin = NUMERAL_MIN;
   /** v6: the emblem's size multiplier (index.ts: the device's piece scale). */
   emblemScale = 1;
+  private _emblemOn = true;
+  /** v6: emblems drawn at all (phones: only once zoomed in past home). */
+  get emblemOn(): boolean {
+    return this._emblemOn;
+  }
+  set emblemOn(v: boolean) {
+    if (v !== this._emblemOn) {
+      this._emblemOn = v;
+      this.dirty = true;
+    }
+  }
   /** v6: the HUD bands the pieces fade under (setHudBands). */
   private hud = { value: new THREE.Vector4(0, 0, 0, 0) };
   /**
@@ -799,6 +810,7 @@ export class TokenSystem {
       this.hud.value.set(0, 0, 0, 0);
       return;
     }
+    // (the fade starts a feather before the band and ends at its edge)
     this.hud.value.set(bufferH - top * dpr, bottom * dpr, feather * dpr, 1);
   }
   pxUnit = 1 / 12.7;
@@ -1614,7 +1626,7 @@ export class TokenSystem {
     else s.set('iRing', 0, 0, 0, 0);
     // v6: the emblem's half-size, in stone radii (EMBLEM_PX at the home view, a little smaller on a small stone)
     const ep = Math.min(EMBLEM_PX * this.emblemScale, 0.42 * Rpx);
-    if (o.emb && !o.ghost) s.set('iEmb', o.emb, ep / Rpx, 1, o.side ?? 1);
+    if (o.emb && !o.ghost && this._emblemOn) s.set('iEmb', o.emb, ep / Rpx, 1, o.side ?? 1);
     else s.set('iEmb', 0, 0, 0, 0);
     if (o.cap && !o.ghost) s.set('iCap', o.cap[0], o.cap[1], o.cap[2], 1 + 6.2 / Rpx);
     else s.set('iCap', 0, 0, 0, 0);
@@ -1713,7 +1725,7 @@ export class TokenSystem {
       t.ext[0] = t.ext[2] = t.fig > 0.002 ? Math.max(Rs, fw / 2) : Rs;
       t.ext[1] = t.fig > 0.002 ? Math.max(Rs, fh - FEET * Rs) : Rs;
       t.ext[3] = Rs;
-      if (t.emb && t.shown > 0) {
+      if (t.emb && t.shown > 0 && this._emblemOn) {
         // v6: the emblem on the upper-left rim belongs to the piece (names keep clear of it)
         const ep = Math.min(EMBLEM_PX * this.emblemScale * px, 0.42 * Rs);
         if ((this.numSide.get(t.id) ?? 1) < 0) t.ext[2] = Math.max(t.ext[2], 0.74 * Rs + ep);

@@ -666,6 +666,8 @@ export const CONT_DR = 1.2;
 
 /** v6: the printed region stays this far inside the board's edge (board units), its corners rounded over CONT_EDGE_ROUND. */
 export const CONT_EDGE = 0.35;
+/** v6: the printed regions' own closing (board units): mouths and gaps under twice this close. */
+export const CONT_CLOSE = 0.5;
 /** v6: the playable-land distance texture's range, board units. */
 export const LAND_DR = 6;
 export const CONT_EDGE_ROUND = 1.4;
@@ -687,6 +689,32 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
   // nearest playable land for every texel (decorative land counts as sea: the halo runs over it)
   const land = new Uint8Array(N);
   for (let i = 0; i < N; i++) land[i] = ids[i] && ids[i] !== DECOR ? 1 : 0;
+  // v6: a speck of land (a few texels: Boston's Castle Island) doesn't get a halo of its own — the closing drew a
+  // perfect circle of outline round it on a thin neck
+  {
+    const minLand = 0.15 * sF * sF;
+    const seen = new Uint8Array(N);
+    const stack: number[] = [];
+    const comp: number[] = [];
+    for (let s0 = 0; s0 < N; s0++) {
+      if (seen[s0] || !land[s0]) continue;
+      comp.length = 0;
+      stack.push(s0);
+      seen[s0] = 1;
+      while (stack.length) {
+        const i = stack.pop()!;
+        comp.push(i);
+        const x = i % W;
+        const y = (i - x) / W;
+        for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1])
+          if (j >= 0 && !seen[j] && land[j]) {
+            seen[j] = 1;
+            stack.push(j);
+          }
+      }
+      if (comp.length < minLand) for (const i of comp) land[i] = 0;
+    }
+  }
   const A = edt2d(land, W, H);
   await yieldFrame();
   // The region is smoothed like a printed zone (a morphological closing): grow CONT_REACH out from the land,
@@ -712,7 +740,26 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
       S[i] = smin(raw, ed, ek);
       if (S[i] > 0) cont[i] = contOf[ids[A.near[i]]] ?? 255;
     }
-  // v6: a scrap of a printed region with none of its continent's land in it (a pocket of halo cut off between
+  // v6: a second, small closing of the printed regions themselves: a pocket of sea behind a narrow mouth (Boston's
+  // empty circle off South Boston) and a hair of open sea between two halos close up, so no thin ring or double
+  // line is left; the pocket is then printed over with the pools below
+  {
+    const r = CONT_CLOSE * sF;
+    const reg = new Uint8Array(N);
+    for (let i = 0; i < N; i++) reg[i] = cont[i] !== 255 ? 1 : 0;
+    const G = edt2d(reg, W, H);
+    await yieldFrame();
+    const notGrown = new Uint8Array(N);
+    for (let i = 0; i < N; i++) notGrown[i] = G.dist[i] > r ? 1 : 0;
+    const Hn = edt2d(notGrown, W, H);
+    await yieldFrame();
+    for (let i = 0; i < N; i++)
+      if (cont[i] === 255 && Hn.dist[i] > r) {
+        cont[i] = cont[G.near[i]];
+        S[i] = Math.max(S[i], 0.75);
+      }
+  }
+  // v6: a scrap of a printed region with none (or a speck) of its continent's land in it (a pocket of halo cut off between
   // two others: Boston's empty circle in the harbour) goes back to the sea before the pools are filled
   {
     const seen = new Uint8Array(N);
@@ -738,7 +785,8 @@ async function buildContinents(ids: Uint8Array, W: number, H: number, sF: number
             stack.push(j);
           }
       }
-      if (own === 0)
+      // (or only a speck of it: Boston's Castle Island printed a perfect empty circle round itself)
+      if (own < 0.25 * sF * sF)
         for (const i of comp) {
           cont[i] = 255;
           S[i] = Math.min(S[i], -1);

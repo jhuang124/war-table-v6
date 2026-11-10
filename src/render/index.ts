@@ -2817,10 +2817,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       return w > 0 && h > 0;
     };
     // [board-pieces v4] a clash is a hidden numeral or two figures on each other (tokens.piecesClash)
-    const tangled = (A: Parts, B: Parts) => piecesClash(A, B);
+    const tangled = (A: Parts, B: Parts) => piecesClash(A, B, undefined, compact); // v6-board: phones let a count cross a figure's edge
     // (one of the three largest against a neighbour: only the numerals must stay clear — the big piece may
     // stand over the neighbour's shrunken figure, never over its count)
-    const numTangled = (A: Parts, B: Parts) => hit(A.fig, B.num) || hit(A.num, B.fig) || hit(A.num, B.num) || hit(A.num, B.stone) || hit(A.stone, B.num);
+    // v6-board: a count over a neighbour's stone rim is fine (tokens.piecesClash); only counts and figures clash
+    const numTangled = (A: Parts, B: Parts) => (compact ? false : hit(A.fig, B.num) || hit(A.num, B.fig)) || hit(A.num, B.num);
     const near: [number, number][] = [];
     const reach = dmax * 2.6;
     for (let i = 0; i < pts.length; i++)
@@ -2831,6 +2832,23 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const big = MAP.territoryIds.map((id) => bigIds.includes(id));
     const lost = new Set<number>();
     let parts = MAP.territoryIds.map((_, i) => at(i));
+    /**
+     * v6-board: a count that must move steps down a little on its own side first (side 2: right, lower), and
+     * only crosses to the stone's left (−1) if that still clashes, so counts stay on one side of the board.
+     */
+    const shiftNum = (x: number, other: number, test: (A: Parts, B: Parts) => boolean): boolean => {
+      const was = side[x];
+      for (const s of was === 1 ? [2, -1] : was === 2 ? [-1] : []) {
+        side[x] = s;
+        const P = at(x);
+        if (!test(P, parts[other])) {
+          parts[x] = P;
+          return true;
+        }
+      }
+      side[x] = was;
+      return false;
+    };
     /** One of the three largest against a neighbour: the neighbour gives way, the big one last. */
     const yieldTo = (b: number, o: number): boolean => {
       if (caps[o] > dmin + 1e-6) {
@@ -2843,25 +2861,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         parts[o] = at(o);
         return true;
       }
-      if (side[o] > 0) {
-        side[o] = -1;
-        const P = at(o);
-        if (!numTangled(P, parts[b])) {
-          parts[o] = P;
-          return true;
-        }
-        side[o] = 1;
-      }
+      if (shiftNum(o, b, numTangled)) return true;
       // (the big one's own numeral to its lower-left edge, before its stone gives way)
-      if (side[b] > 0) {
-        side[b] = -1;
-        const P = at(b);
-        if (!numTangled(P, parts[o])) {
-          parts[b] = P;
-          return true;
-        }
-        side[b] = 1;
-      }
+      if (shiftNum(b, o, numTangled)) return true;
       if (caps[b] <= dmin + 1e-6) return false;
       caps[b] = Math.max(dmin, caps[b] * 0.96);
       lost.add(b);
@@ -2906,13 +2908,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             parts[x] = at(x);
             moved = true;
           } else if (side[x] > 0) {
-            side[x] = -1;
-            const P = at(x);
-            if (tangled(P, x === i ? parts[j] : parts[i])) side[x] = 1;
-            else {
-              parts[x] = P;
-              moved = true;
-            }
+            if (shiftNum(x, x === i ? j : i, tangled)) moved = true;
           }
           if (moved) break;
         }
@@ -3160,7 +3156,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // v6-board: pieces and counts fade under the HUD's top strip and bottom dock (a deep zoom)
     // (only once zoomed past the home view: at home the framing already keeps the pieces clear)
     const hudDeep = rig.zoom > 1.08;
-    tokens.setHudBands(hudDeep ? insets.top : 0, hudDeep ? insets.bottom : 0, renderer.domElement.height, renderer.getPixelRatio(), 26);
+    tokens.setHudBands(hudDeep ? insets.top : 0, hudDeep ? insets.bottom : 0, renderer.domElement.height, renderer.getPixelRatio(), 64);
+    // v6-board: phones show the seat emblems only once zoomed in (at home they are noise beside every stone)
+    tokens.emblemOn = !compact || rig.zoom > 1.3;
     overlay.hudBands = hudDeep ? [insets.top, insets.bottom] : [0, 0];
     tokens.update();
     tray.tick(now);
