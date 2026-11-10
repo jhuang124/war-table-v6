@@ -15,7 +15,7 @@ import { moreWord, Segmented, setMoreWord, Slider, Switch, uiButton } from './co
 import { animateIn, drawEnso, drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, setAttr, setEnso, setStyle, setText, titleText, toggle, underlineEl } from './dom';
 import { unitSrc } from './hud/pictograms';
 import { isPhone } from './layout';
-import { dragToDismiss, grabHandle, resetSheet, sheetDrop, sheetIn, sheetLift, sheetOut } from './sheet';
+import { dragToDismiss, grabHandle, resetSheet, sheetDrop, sheetIn, sheetLift, sheetOut, watchScrollFade } from './sheet';
 
 type Send = (i: UiIntent) => void;
 
@@ -247,6 +247,7 @@ class LogSheet {
     this.empty = h('div', 'log-empty', 'Nothing yet. Every move of the game is written here, round by round.');
     this.el.append(head, this.list, this.empty);
     this.head = head;
+    watchScrollFade(this.list);
   }
 
   update(lines: LogLineVM[]): void {
@@ -365,6 +366,8 @@ export class Overlays {
     }
     this.rulesHouse = h('div', 'rule house');
     blocks.append(this.rulesHouse);
+    // v6: the keyboard has its own sheet (a keyboard only: hidden on touch screens).
+    blocks.append(h('p', 'rules-keys', 'Playing with a keyboard? Press ? for the keys.'));
     this.rules.append(rh, blocks);
 
     // Settings
@@ -437,6 +440,8 @@ export class Overlays {
     this.log = new LogSheet(() => send({ type: 'overlay', overlay: this.backTarget() }));
 
     this.el.append(this.pause, this.rules, this.settings, this.log.el);
+    // v6 one sheet material: where a sheet's words run on past its edge, the paper fades there.
+    for (const el of [this.rules, blocks, this.settings, cols, list]) watchScrollFade(el);
     // Phones: pull any sheet down by its handle / header to close it (back to the board).
     const close = () => {
       this.dragged = true;

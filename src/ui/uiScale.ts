@@ -23,14 +23,24 @@ export function isPhoneViewport(width: number, height: number): boolean {
   return Math.min(width, height) <= 540 && Math.max(width, height) <= 1000;
 }
 
+/**
+ * v6 (readable from the couch): the HUD grows with the screen instead of staying a 1280 laptop UI. At 'laptop' it
+ * takes half the room beyond 1280×720 (1440×900 → 1.06, 1920×1080 → 1.25, 2560×1440 → 1.5); 'couch' and 'tv'
+ * multiply that, fitted so the strips never pile into each other (at most 1.15× the room: TV on 1920×1080 is
+ * 1.725, on 1440×900 1.29). Nothing ever shrinks below 1.
+ */
 export function effectiveUiScale(size: TextSize, width: number, height: number): number {
   if (isPhoneViewport(width, height)) return PHONE_TEXT_SCALE[size] ?? 1;
   const nominal = TEXT_SCALE[size] ?? 1;
   const room = Math.max(1, Math.min(width / BASE_VIEWPORT.width, height / BASE_VIEWPORT.height));
-  return Math.min(nominal, Math.round(room * 1000) / 1000);
+  const grow = 1 + (room - 1) * 0.5;
+  const fit = Math.max(grow, room * 1.15);
+  return Math.round(Math.max(1, Math.min(nominal * grow, fit)) * 1000) / 1000;
 }
 
 /** True when the screen is too small for the chosen size and it was fitted down. */
 export function isFitted(size: TextSize, width: number, height: number): boolean {
-  return effectiveUiScale(size, width, height) < (TEXT_SCALE[size] ?? 1) - 1e-6;
+  if (isPhoneViewport(width, height)) return false;
+  const room = Math.max(1, Math.min(width / BASE_VIEWPORT.width, height / BASE_VIEWPORT.height));
+  return effectiveUiScale(size, width, height) < (TEXT_SCALE[size] ?? 1) * (1 + (room - 1) * 0.5) - 1e-3;
 }

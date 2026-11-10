@@ -230,6 +230,22 @@ layoutBoard();
 if (fx.after === 'openHouse') uiDebug().openHouseRules();
 if (fx.after === 'openMore') uiDebug().openMore();
 if (fx.after === 'skipVictoryIntro') setTimeout(() => uiDebug().skipVictoryIntro(), 50);
+// v6 pokes: a mouse over a seat ring, a touch tap on one, Full stats, the colour popover, the keys sheet.
+const chipAt = (i: number) => document.querySelectorAll<HTMLElement>('.seat-chip')[i];
+const poke = fx.after ?? '';
+setTimeout(() => {
+  if (poke.startsWith('hoverSeat')) chipAt(Number(poke.slice(-1)))?.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+  if (poke.startsWith('sheetSeat')) {
+    const c = chipAt(Number(poke.slice(-1)));
+    c?.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', button: 0, bubbles: true }));
+    c?.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'touch', button: 0, bubbles: true }));
+    c?.click();
+  }
+  if (poke === 'openStats') (uiDebug().skipVictoryIntro(), document.querySelector<HTMLElement>('[data-testid="victory-stats"]')?.click());
+  if (poke === 'openColor') document.querySelector<HTMLElement>('[data-testid="seat-color-1"]')?.click();
+  if (poke === 'keys') uiDebug().openKeys();
+  if (poke === 'a2hs') uiDebug().homeHint(true);
+}, 120);
 const idx = buildIndex();
 if (!stateId || params.get('index') === '1') idx.classList.add('open');
 window.addEventListener('keydown', (e) => {

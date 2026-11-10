@@ -109,6 +109,30 @@ export function sheetOut(sheet: HTMLElement, scrim: HTMLElement | null | undefin
   };
 }
 
+/**
+ * v6 one sheet material: where a sheet's content scrolls, the paper fades into the edge the content continues
+ * past (classes `fade-top` / `fade-bottom`, a soft mask in styles.css), so a cut line never ends at a hard edge.
+ * Idempotent; follows scrolling and resizing.
+ */
+export function watchScrollFade(el: HTMLElement): void {
+  if (el.dataset.fade) return;
+  el.dataset.fade = '1';
+  el.classList.add('scroll-fade');
+  const sync = () => {
+    const more = el.scrollHeight - el.clientHeight > 2;
+    el.classList.toggle('fade-top', more && el.scrollTop > 2);
+    el.classList.toggle('fade-bottom', more && el.scrollTop < el.scrollHeight - el.clientHeight - 2);
+  };
+  el.addEventListener('scroll', sync, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    // Content growing (a fold opening) changes scrollHeight without resizing the box: watch the children too.
+    new MutationObserver(() => requestAnimationFrame(sync)).observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+  }
+  requestAnimationFrame(sync);
+}
+
 function currentY(el: HTMLElement): number {
   const m = /translateY\((-?[\d.]+)px\)/.exec(el.style.transform);
   return m ? Number(m[1]) : 0;

@@ -5,7 +5,10 @@
 import type { CardVM, CardsVM, UiIntent } from '../../game/viewModel';
 import { uiButton } from '../controls';
 import { animateIn, animateOut, h, setText, toggle } from '../dom';
-import { isPhone } from '../layout';
+import { isPhone, layout } from '../layout';
+
+/** v6: phones and portrait tablets get the cards as a bottom sheet (never the desktop's floating sheet over the map). */
+const bottomSheet = (): boolean => isPhone() || (layout.form === 'tablet' && layout.portrait);
 import { dragToDismiss, grabHandle, sheetIn, sheetOut } from '../sheet';
 import { pictogram, SYMBOL_NAME } from './pictograms';
 
@@ -58,7 +61,7 @@ export class CardsSheet {
   private shown = false;
 
   constructor(send: (i: UiIntent) => void) {
-    this.el = h('section', 'cards-sheet panel hidden');
+    this.el = h('section', 'cards-sheet sheet hidden');
     this.el.setAttribute('aria-label', 'Your cards');
     this.scrim = h('div', 'cards-scrim hidden');
     this.scrim.addEventListener('click', () => send({ type: 'cardsPanel', open: false }));
@@ -79,6 +82,7 @@ export class CardsSheet {
     foot.append(this.status, this.trade);
     this.el.append(head, this.grid, foot);
     dragToDismiss(this.el, [this.el.querySelector<HTMLElement>('.grab')!, head], {
+      enabled: bottomSheet,
       scrim: () => this.scrim,
       onDismiss: () => {
         this.dragged = true;
@@ -95,7 +99,7 @@ export class CardsSheet {
     const open = !!vm?.open;
     if (open !== this.shown) {
       this.shown = open;
-      const phone = isPhone();
+      const phone = bottomSheet();
       if (open) {
         this.el.getAnimations().forEach((a) => a.cancel());
         this.el.classList.remove('hidden');

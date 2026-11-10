@@ -8,11 +8,15 @@
 // the round numeral re-inks, the round's one sentence writes and dries, and a hairline in the one gold
 // runs along the strip as the rounds pass. Nothing else is on the screen (the HUD steps aside). Any tap or
 // key skips ('skipReplay'); the end of the last round does the same, so the recap follows on its own.
+// v6: the winner first. Their name and the hero line ('John holds the world', the name in their pigment) are on
+// the paper above the board from the first frame; the strip says 'Skip' at its right.
 // Reduced motion (or a zero pace): no time-lapse at all, straight to the recap.
 
-import type { ReplayVM, UiIntent } from '../../game/viewModel';
+import type { ReplayVM, UiIntent, VictoryVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { drawIn, EASE_IN_QUAD, h, minus, motion, setStyle, setText, toggle } from '../dom';
+import { heroLine } from '../screens/victory';
+import { victoryX } from '../vmx';
 
 /** The last round's sentence stays on the paper this long before the recap comes. */
 const HOLD_LAST_MS = 1200;
@@ -31,10 +35,20 @@ export class Replay {
   /** Called when the replay starts or ends locally (the recap is held back while it plays). */
   onChange: (() => void) | null = null;
 
+  /** v6: the winner first. The hero line is on the paper from the replay's first frame, above the board. */
+  private hero: HTMLDivElement;
+  private heroTitle: HTMLHeadingElement;
+  private heroCalled: HTMLParagraphElement;
+
   constructor(private send: (i: UiIntent) => void) {
     this.el = h('div', 'replay hidden');
     this.el.dataset.testid = 'replay';
     this.el.setAttribute('role', 'status');
+    this.hero = h('div', 'rp-hero');
+    this.heroTitle = h('h1', 'rp-hero-title v-title');
+    this.heroTitle.dataset.testid = 'replay-hero';
+    this.heroCalled = h('p', 'rp-hero-called num hidden');
+    this.hero.append(this.heroTitle, this.heroCalled);
     this.strip = h('div', 'rp-strip');
     this.round = h('span', 'rp-round num');
     this.line = h('span', 'rp-line num');
@@ -43,9 +57,12 @@ export class Replay {
     this.rule = h('i', 'rp-fill');
     rule.append(this.rule);
     const words = h('div', 'rp-words');
-    words.append(this.round, this.line);
+    // Any tap or key skips; the word says so (and is itself a tap target).
+    const skip = h('span', 'rp-skip', 'Skip');
+    skip.setAttribute('aria-hidden', 'true');
+    words.append(this.round, this.line, skip);
     this.strip.append(words, rule);
-    this.el.append(this.strip);
+    this.el.append(this.hero, this.strip);
     // Any tap skips (and never reaches the board under it).
     this.el.addEventListener('pointerdown', (e) => {
       e.preventDefault();
@@ -59,8 +76,14 @@ export class Replay {
     return !!this.vm && this.doneKey !== this.vm.key;
   }
 
-  update(vm: ReplayVM | null | undefined): void {
+  update(vm: ReplayVM | null | undefined, victory?: VictoryVM | null): void {
     vm = vm ?? null;
+    if (vm) {
+      heroLine(this.heroTitle, victory?.title ?? `${vm.winner.name} wins`, vm.winner);
+      const called = victory ? (victoryX(victory).called ?? null) : null;
+      toggle(this.heroCalled, 'hidden', !called);
+      setText(this.heroCalled, called ? minus(called) : '');
+    }
     if (vm === this.vm) return;
     const was = this.active;
     const fresh = !!vm && vm.key !== this.vm?.key;
@@ -80,6 +103,7 @@ export class Replay {
       return;
     }
     setStyle(this.el, '--rp-seat', PLAYER_COLORS[vm.winner.color].light);
+    setStyle(this.el, '--seat-light', PLAYER_COLORS[vm.winner.color].light);
     toggle(this.el, 'hidden', false);
     this.el.getAnimations().forEach((a) => a.cancel());
     this.el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, easing: 'ease-out' });

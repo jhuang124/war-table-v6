@@ -15,7 +15,7 @@ const out = args.out ?? `artifacts/ui/${W}x${H}${text ? '-' + text : ''}`;
 fs.mkdirSync(out, { recursive: true });
 const base = `http://127.0.0.1:${port}/ui-gallery.html`;
 
-const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 const page = await ctx.newPage();
 const errors = [];

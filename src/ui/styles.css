@@ -30,8 +30,8 @@
   --ivory-06: rgba(240, 235, 224, 0.06);
   --gold: #cfa66b; /* candle (palette GOLD), v4 */
   --gold-hi: #dcc08a;
-  --gold-55: rgba(201, 169, 97, 0.55);
-  --gold-30: rgba(201, 169, 97, 0.3);
+  --gold-55: rgba(207, 166, 107, 0.55);
+  --gold-30: rgba(207, 166, 107, 0.3);
 
   --serif: 'Cormorant Garamond Variable', 'Cormorant Garamond', 'EB Garamond', Garamond, Georgia, serif;
   --font: var(--serif);
@@ -269,7 +269,7 @@
 .name-input:hover { border-bottom-color: var(--ivory-40); }
 .ui-root .name-input:focus, .ui-root .name-input:focus-visible { outline: none; border-bottom-color: var(--gold); }
 /* An intentional selection reads as ink: gold at 18%, never a grey block. */
-.ui-root ::selection { background: rgba(201, 169, 97, 0.18); color: inherit; }
+.ui-root ::selection { background: rgba(207, 166, 107, 0.18); color: inherit; }
 
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 0.25rem; }
@@ -369,8 +369,8 @@
    by strip.ts over the current word). It slides there on an advance (180 ms, the brush); `.sr-cut` jumps. */
 .st-rule { grid-area: rule; position: relative; height: 2.25rem; margin: 0 calc(-1 * var(--edge)); pointer-events: none; --ex: 50%; --gap-r: 1.55rem; }
 .sr-half { position: absolute; top: 50%; height: 1px; transition: left 180ms var(--brush), right 180ms var(--brush); }
-.sr-l { left: 0; right: calc(100% - var(--ex) + var(--gap-r)); background: linear-gradient(90deg, rgba(201, 169, 97, 0) 0%, var(--gold-55) 42%, var(--gold) 100%); transform-origin: right center; }
-.sr-r { right: 0; left: calc(var(--ex) + var(--gap-r)); background: linear-gradient(270deg, rgba(201, 169, 97, 0) 0%, var(--gold-55) 42%, var(--gold) 100%); transform-origin: left center; }
+.sr-l { left: 0; right: calc(100% - var(--ex) + var(--gap-r)); background: linear-gradient(90deg, rgba(207, 166, 107, 0) 0%, var(--gold-55) 42%, var(--gold) 100%); transform-origin: right center; }
+.sr-r { right: 0; left: calc(var(--ex) + var(--gap-r)); background: linear-gradient(270deg, rgba(207, 166, 107, 0) 0%, var(--gold-55) 42%, var(--gold) 100%); transform-origin: left center; }
 .sr-glint {
   position: absolute; top: 50%; left: 0; width: 16rem; height: 1px; margin-top: 0; pointer-events: none;
   background: linear-gradient(90deg, rgba(255, 238, 196, 0), rgba(255, 238, 196, 0.85) 50%, rgba(255, 238, 196, 0));
@@ -613,8 +613,8 @@
 .ra-track { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0.2rem; width: 11.5rem; font-size: 0.875rem; white-space: nowrap; }
 .ra-rule { position: relative; height: 1rem; }
 .ra-rule i { position: absolute; top: 50%; height: 1px; }
-.ra-rule i:first-child { left: 0; right: calc(100% - var(--rx) + 0.6rem); background: linear-gradient(90deg, rgba(201, 169, 97, 0), var(--gold)); }
-.ra-rule i:nth-child(2) { right: 0; left: calc(var(--rx) + 0.6rem); background: linear-gradient(270deg, rgba(201, 169, 97, 0), var(--gold)); }
+.ra-rule i:first-child { left: 0; right: calc(100% - var(--rx) + 0.6rem); background: linear-gradient(90deg, rgba(207, 166, 107, 0), var(--gold)); }
+.ra-rule i:nth-child(2) { right: 0; left: calc(var(--rx) + 0.6rem); background: linear-gradient(270deg, rgba(207, 166, 107, 0), var(--gold)); }
 .ra-rule .enso { position: absolute; top: 50%; left: var(--rx); width: 0.95rem; height: 0.95rem; margin: -0.475rem 0 0 -0.475rem; color: var(--gold); }
 .ra-words { display: flex; justify-content: space-between; }
 .ra-words span { position: relative; color: var(--ivory-55); }
@@ -663,8 +663,8 @@
 .lockup { display: flex; flex-direction: column; align-items: center; width: 100%; }
 .lk-name { font-weight: 500; font-size: clamp(3.4rem, 10vh, 6.25rem); line-height: 1; letter-spacing: 0.08em; font-variant: small-caps; color: var(--ivory); margin-right: -0.08em; white-space: nowrap; }
 .lk-rule { position: relative; display: flex; align-items: center; gap: 0.9rem; width: 100%; margin-top: 1.1rem; }
-.lk-half { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(201, 169, 97, 0), var(--gold) 100%); }
-.lk-half:last-child { background: linear-gradient(270deg, rgba(201, 169, 97, 0), var(--gold) 100%); }
+.lk-half { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(207, 166, 107, 0), var(--gold) 100%); }
+.lk-half:last-child { background: linear-gradient(270deg, rgba(207, 166, 107, 0), var(--gold) 100%); }
 .lk-enso { flex: none; width: 4.25rem; height: 4.25rem; color: var(--gold); }
 .title-menu { margin-top: 2.1rem; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
 /* Words: the primary inside a gold brush ring (Continue's save summary under the word, inside the same
@@ -1031,3 +1031,247 @@
 .settings-sheet > .more-word { margin-top: 0.6rem; }
 .settings-more-body { padding-top: 0.6rem; border-top: 1px solid var(--ivory-06); }
 
+
+/* ======================================================================================================= */
+/* v6 · screens and HUD (_claude/v6/PLAN.md bets 2, 4, 6)                                                  */
+/* ======================================================================================================= */
+
+/* ---- 1 · The ending: the winner first, the replay skippable, the row pinned ---------------------------- */
+/* The replay's hero line: the winner's name in their pigment, from the first frame, over the board. */
+.rp-hero {
+  position: absolute; left: 0; right: 0; top: max(7vh, calc(env(safe-area-inset-top, 0px) + 1.5rem)); display: flex; flex-direction: column; align-items: center;
+  gap: 0.35rem; padding: 0 1.5rem; text-align: center; pointer-events: none;
+  text-shadow: 0 0 0.6em rgba(11, 18, 36, 0.9), 0 0 0.2em rgba(11, 18, 36, 0.95);
+}
+.rp-hero-title { font-weight: 500; font-size: 2.5rem; line-height: 1.05; color: var(--ivory); }
+.rp-hero-title .v-who, .v-title .v-who { color: var(--seat-light, var(--ivory)); font-weight: 600; }
+.rp-hero-called, .v-called { font-size: 1.125rem; font-style: italic; color: var(--ivory-78); }
+.rp-words { padding-right: 4rem; padding-left: 7rem; }
+.rp-skip { position: absolute; right: 0; bottom: 0.15rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory-55); text-decoration: underline; text-decoration-color: var(--ivory-28); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
+.replay:hover .rp-skip { color: var(--ivory-90); }
+.rp-line { max-width: 100%; }
+
+/* The recap sheet: hero, beats, chart in a body that scrolls; the row below it never leaves the screen. */
+.victory-screen { overflow: hidden; display: grid; place-items: center; padding: max(3dvh, 1rem) 1rem; }
+.v-scroll { width: min(46rem, 94vw); max-height: calc(100dvh - 2 * max(3dvh, 1rem)); padding: 2rem 0 0; gap: 0; display: flex; flex-direction: column; }
+.v-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 3rem 1.25rem; display: flex; flex-direction: column; gap: 1.5rem; scrollbar-width: thin; scrollbar-color: rgba(240, 235, 224, 0.2) transparent; }
+.v-crest { position: relative; display: grid; place-items: center; width: 3.5rem; height: 3.5rem; color: var(--seat); margin-bottom: 0.4rem; }
+.v-crest .v-crest-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.v-crest .v-crest-emb { position: relative; width: 1.15rem; height: 1.15rem; color: var(--seat-light); }
+.v-moments { gap: 0.45rem; }
+.v-moments .mo-line { font-size: 1.5rem; line-height: 1.3; }
+.v-actions { flex: none; padding: 1rem 3rem calc(1.1rem + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--ivory-12); }
+.v-stats { display: flex; flex-direction: column; gap: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--ivory-06); }
+.v-stats .standings { border-top: 0; padding-top: 0; }
+.v-scroll:has(> .v-body > .v-moments:not(.hidden)) .tl-row { height: 2.75rem; }
+
+/* ---- 2 · Readable from the couch: whose turn from across the room ------------------------------------ */
+/* The active seat's ring and name step up; the others recede. The gold rule stays gold. */
+.seat-chip { transition: color 240ms ease-out, opacity 240ms ease-out; }
+.seat-chip:not(.current):not(.out) { opacity: 0.66; }
+.seat-chip:not(.current):hover, .seat-chip:not(.current):focus-visible { opacity: 1; }
+.sc-ring { transition: opacity 240ms ease-out, width 320ms var(--brush), height 320ms var(--brush); }
+.seat-chip.current .sc-ring { width: 3.6rem; height: 3.6rem; }
+.seat-chip.current .sc-name { font-size: 1.5rem; }
+.seat-chip.current .sc-name::after { display: none; }
+.seat-chip.current .sc-emb { width: 1rem; height: 1rem; }
+/* The line under a name: a threat in ivory, a grudge in the seat's pigment, a personality quiet. */
+.sc-pers.is-threat { font-style: normal; font-weight: 600; color: var(--ivory-90); }
+.sc-pers.is-grudge { color: color-mix(in oklab, var(--seat-light) 80%, transparent); }
+/* A capital held: a small closed ring after the name; lost: open and faint. */
+.sc-cap { width: 0.55rem; height: 0.55rem; margin-left: 0.15rem; overflow: visible; }
+.sc-cap circle { fill: var(--seat-light); stroke: var(--seat-light); stroke-width: 1; }
+.sc-cap.lost circle { fill: none; opacity: 0.55; stroke-dasharray: 3 2; }
+.sc-cards svg { width: 0.8rem; height: 1.05rem; }
+
+/* The turn passes: a wash of the incoming seat's pigment runs along the rule for a second, then the gold. */
+.sr-wash {
+  position: absolute; left: 0; right: 0; top: 50%; height: 1.1rem; margin-top: -0.55rem; pointer-events: none; z-index: 1;
+  background:
+    linear-gradient(180deg, transparent calc(50% - 1.5px), var(--wash) calc(50% - 1.5px), var(--wash) calc(50% + 1.5px), transparent calc(50% + 1.5px)),
+    linear-gradient(180deg, transparent, color-mix(in oklab, var(--wash) 45%, transparent) 50%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+}
+/* ...and the incoming name is set large for that second, then settles to the line's size. */
+.rb-name { display: inline-block; transition: font-size 420ms var(--brush); }
+.rb-name.rb-arrive { font-size: 2.5rem; line-height: 1; }
+
+/* ---- 3 · The seat's card: type and a hairline on the paper, never a box ------------------------------- */
+.seat-card {
+  isolation: isolate; position: absolute; z-index: 30; width: max-content; max-width: 22rem; pointer-events: none;
+  display: flex; flex-direction: column; gap: 0.2rem; padding: 0.2rem 0.1rem;
+  text-shadow: 0 0 0.45em rgba(11, 18, 36, 0.95), 0 0 0.15em rgba(11, 18, 36, 0.95);
+}
+.seat-card:not(.in-sheet)::before {
+  /* the paper deepens under the words and feathers out: no edge, no box */
+  content: ''; position: absolute; inset: -0.7rem -1.1rem -0.8rem -1rem; z-index: -1; pointer-events: none;
+  background: rgba(11, 18, 36, 0.9); filter: blur(14px);
+}
+.scd-head { display: flex; align-items: baseline; gap: 0.45rem; white-space: nowrap; }
+.scd-head .emb { width: 0.85rem; height: 0.85rem; color: var(--seat-light); align-self: center; }
+.scd-name { font-size: 1.5rem; font-weight: 600; color: var(--seat-light); }
+.scd-kind { font-size: 1.125rem; font-style: italic; font-weight: 500; color: var(--ivory-55); }
+.scd-rule { display: block; height: 1px; width: 100%; min-width: 9rem; margin: 0.25rem 0 0.3rem; background: linear-gradient(90deg, var(--ivory-40), var(--ivory-12) 80%, transparent); }
+.scd-facts { font-size: 1.125rem; font-weight: 600; color: var(--ivory-90); }
+.scd-line { font-size: 1.125rem; color: var(--ivory-78); }
+.scd-threat { font-size: 1.125rem; font-weight: 600; color: var(--ivory); }
+.scd-mission { font-size: 1.125rem; font-style: italic; color: var(--ivory-90); }
+.scd-act { margin-top: 0.25rem; font-size: 0.875rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ivory-55); }
+/* Touch: the same words as a small sheet from the bottom edge. */
+.seat-sheet-scrim { position: absolute; inset: 0; z-index: 75; pointer-events: auto; display: flex; align-items: flex-end; justify-content: center; background: rgba(8, 13, 27, 0.45); }
+.seat-sheet { width: 100%; max-width: 30rem; padding: 0.3rem 1.5rem calc(env(safe-area-inset-bottom, 0px) + 1.1rem); display: flex; flex-direction: column; align-items: stretch; gap: 0.4rem; }
+.seat-sheet .seat-card { position: static; max-width: none; width: auto; text-shadow: none; padding: 0.4rem 0 0.2rem; }
+.seat-sheet .seat-ask { align-self: flex-start; padding-left: 0; }
+.seat-sheet .grab { display: flex; justify-content: center; align-items: center; height: 1.5rem; }
+.seat-sheet .grab i { display: block; width: 2.5rem; height: 1px; background: var(--ivory-40); }
+
+/* ---- 7 · One sheet material: paper laid on the board ---------------------------------------------------- */
+/* Every sheet (menu, rules, settings, ledger, cards, new game, victory, keys, confirm) is the same paper: the
+   board's own fibre in the deeper indigo, darker toward its edges, and edges that feather into the board
+   (a soft mask, no hard rectangle, no drop shadow). Where its words scroll on past an edge, the paper fades
+   there too (sheet.ts watchScrollFade). The board under a sheet is dimmed by its scrim. */
+.ui-root .sheet {
+  --fx: 1.1rem; --ft: 1rem; --fb: 1.1rem; --fade-t: 0px; --fade-b: 0px;
+  border-top: 0; box-shadow: none;
+  background-color: #0e1830;
+  background-image:
+    radial-gradient(130% 120% at 42% 38%, rgba(4, 7, 16, 0) 52%, rgba(4, 7, 16, 0.42) 100%),
+    linear-gradient(rgba(13, 21, 42, 0.84), rgba(13, 21, 42, 0.84)),
+    linear-gradient(#1a2a4c, #1a2a4c),
+    var(--paper-tex, none);
+  background-size: auto, auto, auto, 512px 512px;
+  background-blend-mode: normal, normal, color, normal;
+  -webkit-mask-image:
+    linear-gradient(90deg, transparent 0, #000 var(--fx), #000 calc(100% - var(--fx)), transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 calc(var(--ft) + var(--fade-t)), #000 calc(100% - var(--fb) - var(--fade-b)), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(90deg, transparent 0, #000 var(--fx), #000 calc(100% - var(--fx)), transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 calc(var(--ft) + var(--fade-t)), #000 calc(100% - var(--fb) - var(--fade-b)), transparent 100%);
+  mask-composite: intersect;
+}
+.ui-root .log-sheet { background-color: #0e1830; border-top: 0; }
+.ui-root .sheet.fade-bottom { --fade-b: 2.75rem; }
+.ui-root .sheet.fade-top { --fade-t: 2rem; }
+.scroll-fade:not(.sheet).fade-bottom { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 2.75rem), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 2.75rem), transparent); }
+.scroll-fade:not(.sheet).fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 2rem); mask-image: linear-gradient(180deg, transparent, #000 2rem); }
+.scroll-fade:not(.sheet).fade-top.fade-bottom { -webkit-mask-image: linear-gradient(180deg, transparent, #000 2rem, #000 calc(100% - 2.75rem), transparent); mask-image: linear-gradient(180deg, transparent, #000 2rem, #000 calc(100% - 2.75rem), transparent); }
+/* The board under a sheet: dimmed a little more, evenly. */
+.scrim { background: rgba(8, 13, 27, 0.5); }
+.newgame-screen { background: rgba(8, 13, 27, 0.55); }
+.v-scrim { background: rgba(8, 13, 27, 0.6); }
+/* Tablets: sheets measure against the visible viewport (Safari's toolbar), never 100vh. */
+.log-sheet { max-height: calc(100dvh - 6rem); }
+.rules-sheet, .settings-sheet { max-height: calc(100dvh - 4rem); }
+.ng-sheet { max-height: calc(100dvh - 3rem); }
+/* The cards sheet docks centred above the dock (open sea), not over the right of the map. */
+.cards-sheet { left: 0; right: 0; margin: 0 auto; width: min(26rem, 90vw); padding: 1.3rem 1.6rem 1.4rem; }
+/* The keys sheet. */
+.keys-scrim { z-index: 85; }
+.keys-sheet { width: min(32rem, 92vw); }
+.keys-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.7rem 1.75rem; margin: 0; align-items: baseline; }
+.keys-k { font-size: 1.125rem; font-weight: 600; color: var(--ivory); white-space: pre; }
+.keys-what { margin: 0; font-size: 1.125rem; color: var(--ivory-78); }
+.rules-keys { font-size: 1.125rem; color: var(--ivory-55); padding-top: 0.4rem; }
+:root.touch .rules-keys { display: none; }
+/* The phone's one-time Add to Home Screen line: plain words at the foot of the title. */
+.home-hint { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem); z-index: 60; display: flex; justify-content: center; padding: 0 1.25rem; pointer-events: none; }
+.home-hint.hidden { display: none; }
+.hh-text { font-size: 0.875rem; font-style: italic; color: var(--ivory-78); text-align: center; text-shadow: 0 0 0.4em rgba(11, 18, 36, 0.9); }
+
+/* ---- 8 · The ensō is the brand and the rule; the menu and the wild card have their own marks ------------ */
+.ts-menu .ts-strokes { width: 1.6rem; height: 1.6rem; overflow: visible; }
+.card .picto-wild { width: 100%; }
+.picto-trio { display: flex; align-items: flex-end; justify-content: center; gap: 0.1rem; width: 100%; }
+.picto-trio img { width: 30%; max-height: 2.4rem; object-fit: contain; opacity: 0.9; }
+.ra-card .picto-trio img { max-height: 1.2rem; }
+/* The keys sheet carries the screen: the HUD's gold steps down beneath it, as under any sheet. */
+.ui-root:has(> .keys-scrim:not(.hidden)) .hud .tr-seg.gold { color: var(--ivory-78); }
+.ui-root:has(> .keys-scrim:not(.hidden)) .hud .tr-seg.gold .tr-ul,
+.ui-root:has(> .keys-scrim:not(.hidden)) .hud .btn.gold > .btn-ring { color: var(--ivory-55); }
+
+/* ---- 4 · The territory note rides beside the pointer ----------------------------------------------------- */
+.name-card.in-margin:not(.hidden) { left: 24px; top: 90px; }
+.name-card.in-margin::before {
+  content: ''; position: absolute; inset: -0.6rem -1rem -0.7rem -0.9rem; z-index: -1; pointer-events: none;
+  background: rgba(11, 18, 36, 0.86); filter: blur(12px);
+}
+.name-card.in-margin { isolation: isolate; width: max-content; max-width: 18rem; }
+
+/* ---- 5 · New game: rows that hold, switches that say so -------------------------------------------------- */
+/* A switch: the word 'On' / 'Off' beside its hairline; on, the knob is inked solid and the line is ivory. */
+.switch-end { flex: none; display: inline-flex; align-items: center; gap: 0.7rem; }
+.switch-state { min-width: 1.8rem; text-align: right; font-size: 0.875rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ivory-40); }
+.switch.on .switch-state { color: var(--ivory); }
+.switch-knob::after { content: ''; position: absolute; inset: 28%; border-radius: 50%; background: currentColor; opacity: 0; transition: opacity 160ms; }
+.switch.on .switch-knob::after { opacity: 1; }
+.switch.on .switch-track::before { background: var(--ivory-78); height: 1.5px; }
+/* Seat rows: More open adds a line under the name for an AI's difficulty and personality; the row stays one line. */
+.seat-row { grid-template-columns: 1.4rem auto minmax(10rem, 1fr) auto 2.75rem; grid-template-areas: 'num emb name kind rm' '. . ai ai .'; }
+.ng-sheet:not(.more-open) .seat-row { grid-template-columns: 1.4rem auto minmax(10rem, 1fr) auto 2.75rem; }
+.seat-row > .seat-num { grid-area: num; }
+.seat-row > .seat-color { grid-area: emb; }
+.seat-row > .name-input { grid-area: name; }
+.seat-row > .seg { grid-area: kind; }
+.seat-row > .remove-seat { grid-area: rm; }
+.seat-ai { grid-area: ai; display: flex; align-items: flex-start; gap: 2.25rem; flex-wrap: wrap; }
+.seat-row:not(.is-ai) > .seat-ai, .ng-sheet:not(.more-open) .seat-row > .seat-ai { display: none; }
+.seat-ai .diff-wrap.off { display: none; }
+.seat-row.has-pers { padding-bottom: 1.3rem; }
+.ng-sheet:not(.more-open) .seat-row.has-pers { padding-bottom: 0.35rem; }
+.seat-ai .seg-row .seg-opt { min-height: 2.4rem; font-size: 1.125rem; }
+/* The colour popover opens under the emblem, on the same paper as every sheet (never over the words). */
+.swatch-pop { left: -0.6rem; top: calc(100% + 0.35rem); transform: none; z-index: 12; padding: 0.7rem 1rem 0.9rem; border-top: 0;
+  background-color: #091020; background-image: linear-gradient(rgba(8, 13, 28, 0.9), rgba(8, 13, 28, 0.9)), linear-gradient(#1a2a4c, #1a2a4c), var(--paper-tex, none);
+  background-size: auto, auto, 512px 512px; background-blend-mode: normal, color, normal;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 0.7rem, #000 calc(100% - 0.7rem), transparent), linear-gradient(180deg, transparent, #000 0.5rem, #000 calc(100% - 0.7rem), transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 0.7rem, #000 calc(100% - 0.7rem), transparent), linear-gradient(180deg, transparent, #000 0.5rem, #000 calc(100% - 0.7rem), transparent);
+  mask-composite: intersect; }
+.form-desktop .sw-name, .form-tablet .sw-name { display: none; }
+/* Map tiles: the whole line, never cut mid-word. */
+.map-desc { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
+
+/* ---- 6 · Title and splash: one lockup, lettered, in the one gold ----------------------------------------- */
+.lk-name {
+  font-weight: 500; font-size: clamp(3rem, 8.4vh, 5.5rem); line-height: 1; letter-spacing: 0.2em; margin-right: -0.2em;
+  font-variant: normal; color: var(--ivory); white-space: nowrap;
+  text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 1.2em rgba(11, 18, 36, 0.75);
+}
+.lk-ch { display: inline-block; }
+.lk-gap { display: inline-block; width: 0.32em; }
+.lk-rule { width: min(36rem, 90vw); }
+.title-col { width: min(36rem, 90vw); }
+.lk-enso { width: 4.25rem; height: 4.25rem; }
+/* The paper deepens behind the lockup and the words, so the board's labels never show through them. */
+.lockup { position: relative; }
+.lockup::before, .title-menu::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none; left: -18%; right: -18%; top: -45%; bottom: -35%;
+  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.92), rgba(11, 18, 36, 0.72) 55%, rgba(11, 18, 36, 0));
+}
+.title-menu { position: relative; isolation: isolate; }
+.title-menu::before { left: -30%; right: -30%; top: -12%; bottom: -12%; background: radial-gradient(closest-side, rgba(11, 18, 36, 0.7), rgba(11, 18, 36, 0.45) 55%, rgba(11, 18, 36, 0)); }
+.title-col { isolation: isolate; }
+/* Continue: the ring is the word's own; the save's summary sits under it, the thumbnail beside it as a plate. */
+.title-item.continue, .title-item.continue.gold { flex-direction: row; height: 4rem; min-height: 0; padding: 0 2.25rem; margin-bottom: 2.1rem; }
+.title-item.continue .cont-sub { position: absolute; left: 50%; top: calc(100% + 0.1rem); transform: translateX(-50%); white-space: nowrap; color: var(--ivory-70); font-size: 1.125rem; font-weight: 500; }
+.title-item.continue:not(.gold) { margin-bottom: 1.8rem; }
+.cont-thumb {
+  right: calc(100% + 1.4rem); top: 50%; width: 132px; height: 66px; margin-top: -24px; border-top: 0; box-shadow: none; background: transparent; opacity: 0.92;
+  -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent); mask-image: radial-gradient(closest-side, #000 62%, transparent);
+}
+
+/* ---- 9 · Small but felt ------------------------------------------------------------------------------------ */
+/* A folded count is the stepper at its default; its number opens the slider (desktop). */
+.stepper-ctl.can-open .sp-n { cursor: pointer; text-decoration: underline; text-decoration-color: var(--ivory-28); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
+.stepper-ctl.can-open .sp-n:hover { text-decoration-color: var(--ivory-70); }
+/* Cards, a word away on any of your turns. */
+.st-seat .st-cards { pointer-events: auto; height: 2.75rem; margin-left: 0.4rem; }
+.st-cards.hidden { display: none; }
+/* The replay's hero: the paper deepens behind it (feathered, no edge) so the winner reads over a busy board. */
+.rp-hero { isolation: isolate; }
+.rp-hero::before {
+  content: ''; position: absolute; z-index: -1; left: 50%; top: -1.6rem; width: min(52rem, 96vw); height: calc(100% + 3.2rem); transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.86), rgba(11, 18, 36, 0.62) 60%, rgba(11, 18, 36, 0));
+}

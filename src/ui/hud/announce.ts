@@ -103,7 +103,12 @@ export class Announcements {
     const t = h('div', 'rb-title num');
     // The seat's name (the first words, up to the first ' · ') in its own wash; the rest in ivory.
     const cut = b.seat && text.startsWith(b.seat.name) ? b.seat.name.length : 0;
-    if (cut) t.append(h('span', 'rb-name', text.slice(0, cut)), document.createTextNode(text.slice(cut)));
+    if (cut) {
+      // v6: on a turn line the incoming name is set large for its first second, then settles to the line's size.
+      const name = h('span', `rb-name${b.kind === 'turn' && !motion.reduced ? ' rb-arrive' : ''}`, text.slice(0, cut));
+      if (b.kind === 'turn' && !motion.reduced) window.setTimeout(() => name.classList.remove('rb-arrive'), 1000);
+      t.append(name, document.createTextNode(text.slice(cut)));
+    }
     else t.textContent = text;
     el.append(t);
     // v4 Q4: one line above the rule. The grudge (`recap`) is the receipt's to tell now ('While you were

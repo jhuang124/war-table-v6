@@ -20,6 +20,7 @@ import type {
 } from '../../game/viewModel';
 import type { PlayerColorId, PlayerStats, TerritoryId, TimelinePoint } from '../../engine/types';
 import { BOARD } from '../../map';
+import type { LengthOptionX, NameCardVMx, SeatChipX, VictoryVMx } from '../vmx';
 
 export const JOHN: SeatRef = { id: 0, name: 'John', color: 'crimson', kind: 'human' };
 export const COBALT: SeatRef = { id: 1, name: 'Slate', color: 'cobalt', kind: 'ai' };
@@ -100,7 +101,7 @@ export const NEW_GAME_PROBLEMS: NewGameVM = {
 
 // ---- in game --------------------------------------------------------------
 
-const chips = (cur: number, o: Partial<Record<number, Partial<SeatChipVM>>> = {}): SeatChipVM[] =>
+const chips = (cur: number, o: Partial<Record<number, Partial<SeatChipVM & SeatChipX>>> = {}): SeatChipVM[] =>
   SEATS.map((seat, i) => ({ seat, current: i === cur, eliminated: false, territories: [14, 11, 9, 8][i], ...(o[i] ?? {}) }));
 
 const btn = (id: ButtonVM['id'], label: string, primary = false): ButtonVM => ({ id, label, primary });
@@ -259,7 +260,7 @@ export interface Fixture {
   label: string;
   vm: ViewModel;
   /** Post-mount pokes at local UI state. */
-  after?: 'openHouse' | 'openMore' | 'skipVictoryIntro';
+  after?: 'openHouse' | 'openMore' | 'skipVictoryIntro' | 'hoverSeat1' | 'hoverSeat2' | 'sheetSeat0' | 'sheetSeat2' | 'openStats' | 'openColor' | 'keys' | 'a2hs';
   /** Dice the fake tray shows (attacker, defender). */
   dice?: [number[], number[]] | null;
 }
@@ -452,6 +453,39 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('sam-turn', 'v5.1', 'Two humans · Sam\'s turn (no cover)', game({ seats: [JOHN, SAM, AMBER, EMERALD].map((seat, i) => ({ seat, current: i === 1, eliminated: false, territories: [14, 11, 9, 8][i] })), strip: STRIPS['sam-turn'], cards: null, holding: { seat: SAM, armies: 7, breakdown: '11 territories · Europe +5' } }));
   add('occupy-collapsed', 'v5.1', 'Occupy · all but one, count folded', game({ strip: STRIPS['occupy-collapsed'], cards: null, seats: chips(0, { 0: { territories: 15 }, 1: { territories: 10 } }) }));
   add('settings-folded', 'v5.1', 'Settings · four things, More folded', game({ strip: STRIPS.attack, cards: null }, { overlay: 'settings' }));
+  // ---- v6 · screens and HUD ----------------------------------------------------------------------------
+  const v6Seats = chips(0, {
+    0: { armies: 38, cards: 3, continents: ['australia'], capital: { territory: 'Eastern Australia', held: true }, mission: 'Hold Asia and Africa' },
+    1: { armies: 31, cards: 2, continents: ['europe'], difficulty: 'Hard', personality: { name: 'Warlord', line: 'Attacks first' }, standing: 'hostile', standingReason: 'Slate is hostile · you broke the peace in round 4', grudgeTicks: 3, threat: 'needs 8 · holds a set worth 30', capital: { territory: 'Ukraine', held: true } },
+    2: { armies: 22, cards: 4, difficulty: 'Normal', standing: 'wary', standingReason: 'Ochre is wary of you · you took Siam last round', canAskPeace: true, grudgeTicks: 0, capital: { territory: 'Siam', held: false } },
+    3: { armies: 17, cards: 0, difficulty: 'Easy', standing: 'ally', standingReason: 'Sage is your ally · peace for 2 more rounds', continents: ['south_america'], grudgeTicks: 1, capital: { territory: 'Brazil', held: true } },
+  });
+  add('v6-seats', 'v6', 'Seat strip · quiet marks, threat line, capitals', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }));
+  add('v6-seats-ai', 'v6', 'Seat strip · an AI\'s turn (Ochre large, others recede)', game({ seats: v6Seats.map((c, i) => ({ ...c, current: i === 2 })), strip: { ...STRIPS['ai-turn'], track: track('attack', { seat: AMBER, live: false, turnKey: '6:2' }), accent: 'amber', line: 'Ochre attacks Siam', lineKind: 'narration' }, cards: null }));
+  add('v6-seat-card', 'v6', 'Seat card · hover on Slate', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }), { after: 'hoverSeat1' });
+  add('v6-seat-card-ask', 'v6', 'Seat card · hover on Ochre (ask for peace)', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }), { after: 'hoverSeat2' });
+  add('v6-seat-sheet', 'v6', 'Seat sheet · touch, Ochre', game({ seats: v6Seats, strip: STRIPS.attack, cards: null }), { after: 'sheetSeat2' });
+  add('v6-seat-mine', 'v6', 'Seat sheet · touch, your own seat (mission)', game({ seats: v6Seats, strip: STRIPS.place }), { after: 'sheetSeat0' });
+  const called: VictoryVMx = { ...VICTORY, winner: AMBER, title: 'Ochre leads', subline: 'Round 14 · 16 of 42 territories', called: 'Called in round 14 · Ochre held the most territories', moments: ['Round 6: Siberia changed hands three times', 'Round 11: Ochre took Africa from John'] };
+  add('v6-victory-called', 'v6', 'Victory · a called game (honest copy)', root({ screen: 'victory', game: null, victory: called }), { after: 'skipVictoryIntro' });
+  add('v6-victory-stats', 'v6', 'Victory · Full stats open', root({ screen: 'victory', game: null, victory: { ...VICTORY, moments: MOMENTS } }), { after: 'openStats' });
+  add('v6-replay-called', 'v6', 'Replay · a called game', root({ screen: 'victory', game: { ...BASE_GAME, cards: null, replay: { ...REPLAY, key: 2, winner: AMBER } }, victory: called }));
+  const lengthsX: LengthOptionX[] = [
+    { id: 'quick', label: 'Quick', detail: '60% or 12 rounds', estimate: '~40 min' },
+    { id: 'evening', label: 'Evening', detail: '70% of the world', estimate: '~60–90 min' },
+    { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: '2–3 h', advanced: true },
+  ];
+  add('v6-newgame', 'v6', 'New game · Full conquest under More', root({ screen: 'newGame', game: null, newGame: { ...NG51, maps: WHERE_MAPS, mapId: 'classic', lengthOptions: lengthsX } }));
+  add('v6-newgame-more', 'v6', 'New game · More open (seat rows hold)', root({ screen: 'newGame', game: null, newGame: { ...NG51, maps: WHERE_MAPS, mapId: 'classic', lengthOptions: lengthsX, house: { ...NG51.house, missions: true } } }), { after: 'openMore' });
+  add('v6-newgame-color', 'v6', 'New game · colour picker open', root({ screen: 'newGame', game: null, newGame: { ...NG51, maps: WHERE_MAPS, mapId: 'classic', lengthOptions: lengthsX } }), { after: 'openColor' });
+  add('v6-occupy-13', 'v6', 'Occupy · 13 choices (phones: steppers)', game({ strip: { ...STRIPS['occupy-totals'], count: { control: 'slider', value: 13, min: 1, max: 13 }, buttons: [btn('move', 'Move 13', true)] }, cards: null }));
+  add('v6-occupy-folded', 'v6', 'Occupy · count folded but adjustable', game({ strip: STRIPS['occupy-collapsed'], cards: null }));
+  add('v6-cards-anytime', 'v6', 'Attack · Cards reachable on your turn', game({ strip: STRIPS.attack, cards: CARDS }));
+  add('v6-keys', 'v6', 'Keys sheet (?)', game({ strip: STRIPS.attack, cards: null }), { after: 'keys' });
+  const nc: NameCardVMx = { territory: 'Ural', continent: 'Asia', bonus: 7, owner: JOHN, armies: 19, x: Math.round(_W * 0.6), y: Math.round(_H * 0.3), key: 2, history: 'Held since round 3 · taken from Sage', rect: { x: Math.round(_W * 0.56), y: Math.round(_H * 0.22), w: Math.round(_W * 0.08), h: Math.round(_H * 0.14) } };
+  add('v6-name-card', 'v6', 'Territory note · beside the pointer, off the territory', game({ strip: STRIPS.attack, cards: null, nameCard: nc }));
+  add('v6-title-save', 'v6', 'Title with a save (Continue, thumbnail plate)', root({ screen: 'title', game: null, save: { summary: 'Round 7 · John vs 3 AI', sketch: { owners } } }));
+  add('v6-a2hs', 'v6', 'Title · Add to Home Screen line (phones)', root({ screen: 'title', game: null }), { after: 'a2hs' });
   add('reduced', 'Menu', 'Reduced motion on', game({ strip: STRIPS['attack-armed'], battle: ARMED, cards: null }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }), { dice: null });
   return F;
 }
