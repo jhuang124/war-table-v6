@@ -36,6 +36,8 @@ import { activeMapId } from '../../map/registry';
 const MAP = mapDefOf({ mapId: activeMapId() });
 import { brushMark } from '../../shared/enso';
 import { drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, pop, setEmblem, setEnso, setStyle, setText, svg, toggle } from '../dom';
+import { seatX } from '../vmx';
+import { SeatCard } from './seatcard';
 
 /** The standing as a word, for screen readers (the reason itself is the controller's, in the one line). */
 const STANDING_WORD = { ally: 'an ally', even: 'even', wary: 'wary', hostile: 'hostile' } as const;
@@ -134,8 +136,13 @@ class Chip {
   private longPressed = false;
   /** v5.1 C: a tap on a ring whose seat can be asked for peace (TopStrip wires it to index.ts). */
   onAsk: ((vm: SeatChipVM) => void) | null = null;
+  /** v6: the seat's card: hover / focus (desktop) and a tap (touch). */
+  onCard: ((vm: SeatChipVM | null, chip: HTMLElement) => void) | null = null;
+  onTouchTap: ((vm: SeatChipVM) => void) | null = null;
+  private lastPointer = 'mouse';
   private emb: SVGSVGElement;
   private name: HTMLSpanElement;
+  private cap: SVGSVGElement;
   private terr: HTMLSpanElement;
   private by: HTMLSpanElement;
   private marks: HTMLSpanElement;
@@ -152,11 +159,13 @@ class Chip {
   constructor(send: (i: UiIntent) => void) {
     this.el = h('div', 'seat-chip');
     this.grudges = new GrudgeTicks();
+    void this.grudges;
     // v5 F7: a mouse over the ring lifts that seat's land on the board (never on touch: no hover there).
     // v5.1 C: over an AI's ring it also asks for its standing's reason (the controller writes it in the line).
     let standingShown = false;
     this.el.addEventListener('pointerenter', (e) => {
       if (e.pointerType !== 'mouse' || !this.vm) return;
+      this.onCard?.(this.vm, this.el);
       send({ type: 'hoverSeat', player: this.vm.seat.id });
       if (this.vm.standing) {
         standingShown = true;
@@ -165,6 +174,7 @@ class Chip {
     });
     this.el.addEventListener('pointerleave', (e) => {
       if (e.pointerType !== 'mouse') return;
+      if (document.activeElement !== this.el) this.onCard?.(null, this.el);
       send({ type: 'hoverSeat', player: null });
       if (standingShown) send({ type: 'seatStanding', player: null });
       standingShown = false;
@@ -174,7 +184,10 @@ class Chip {
     // Releasing puts it away.
     let pressT = 0;
     let pressed: 'mission' | 'standing' | null = null;
+    this.el.addEventListener('focus', () => this.vm && this.el.matches(':focus-visible') && this.onCard?.(this.vm, this.el));
+    this.el.addEventListener('blur', () => this.onCard?.(null, this.el));
     this.el.addEventListener('pointerdown', (e) => {
+      this.lastPointer = e.pointerType;
       if (e.button !== 0 || !this.vm) return;
       const player = this.vm.seat.id;
       const standing = !!this.vm.standing;
@@ -199,6 +212,8 @@ class Chip {
       const vm = this.vm;
       const held = this.longPressed;
       this.longPressed = false;
+      // v6 touch: a tap opens the seat's card as a small sheet (it carries 'Ask Sage for peace' when it applies).
+      if (vm && this.lastPointer === 'touch' && !held) return this.onTouchTap?.(vm);
       if (vm?.canAskPeace && !held) this.onAsk?.(vm);
     });
     this.el.addEventListener('keydown', (e) => {
@@ -222,11 +237,13 @@ class Chip {
     const text = h('span', 'sc-text');
     this.emb = emblem('crimson', 'emb sc-emb');
     this.name = h('span', 'sc-name');
+    this.cap = svg('svg', { viewBox: '0 0 10 10', class: 'sc-cap hidden', 'aria-hidden': 'true' });
+    this.cap.append(svg('circle', { cx: 5, cy: 5, r: 3.4 }));
     this.by = h('span', 'sc-by hidden');
     this.pers = h('span', 'sc-pers hidden');
     this.voice = h('span', 'sc-voice hidden');
     const nm = h('span', 'sc-nameline');
-    nm.append(this.emb, this.name);
+    nm.append(this.emb, this.name, this.cap);
     text.append(nm, this.by, this.pers, this.voice);
     this.el.append(col, text);
   }
@@ -257,21 +274,31 @@ class Chip {
       this.voice.title = voice;
       if (prev) drawIn(this.voice, 320);
     }
-    toggle(this.pers, 'hidden', !pers || !!voice);
-    setText(this.pers, pers?.name ?? '');
-    // Phones hide the word: the ring's title carries it (hover / long-press).
-    this.el.title = pers ? `${pers.name} · ${pers.line}` : '';
+    // v6: one quiet line under the name, the most pressing first: how close it is to winning (threat), what it
+    // has taken from you, else its personality.
+    const x = seatX(vm);
+    const gtN = vm.eliminated ? 0 : (vm.grudgeTicks ?? 0);
+    const threat = !vm.eliminated && x.threat ? minus(x.threat) : '';
+    const quiet = threat || (gtN > 0 ? `took ${gtN} of yours` : '') || pers?.name || '';
+    toggle(this.pers, 'hidden', !quiet || !!voice);
+    toggle(this.pers, 'is-threat', !!threat);
+    toggle(this.pers, 'is-grudge', !threat && gtN > 0);
+    setText(this.pers, quiet);
+    // v6 capitals: a small closed ring after the name while the seat holds its capital, an open one once lost.
+    const cap = vm.eliminated ? null : (x.capital ?? null);
+    toggle(this.cap, 'hidden', !cap);
+    toggle(this.cap, 'lost', !!cap && !cap.held);
+    this.cap.dataset.testid = `seat-capital-${vm.seat.id}`;
+    // v6: the seat's card says it all in words; no native tooltip.
+    this.el.removeAttribute('title');
     this.el.dataset.personality = pers?.name.toLowerCase() ?? '';
     // v5.1 C: a ring that can be asked for peace is a button (a tap offers 'Ask Sage for peace').
     const ask = !!vm.canAskPeace && !vm.eliminated;
     toggle(this.el, 'can-ask', ask);
-    if (ask) {
-      this.el.setAttribute('role', 'button');
-      this.el.tabIndex = 0;
-    } else if (this.el.getAttribute('role')) {
-      this.el.removeAttribute('role');
-      this.el.removeAttribute('tabindex');
-    }
+    // Every ring takes keyboard focus (its card writes itself); one that can be asked for peace is a button.
+    this.el.tabIndex = 0;
+    if (ask) this.el.setAttribute('role', 'button');
+    else if (this.el.getAttribute('role')) this.el.removeAttribute('role');
     this.updateDisc(vm);
     this.updateStanding(vm);
     const out = vm.eliminated ? vm.out : null;
@@ -279,7 +306,6 @@ class Chip {
     if (out) setText(this.by, `taken by ${out.by.name}`);
     this.el.dataset.testid = `seat-${vm.seat.id}`;
     this.voice.dataset.testid = `seat-voice-${vm.seat.id}`;
-    this.grudges.el.dataset.seat = String(vm.seat.id);
     this.updateMarks(vm);
     const held = (vm.continents ?? []).map((c) => MAP.continents[c]?.name ?? c);
     const gt = vm.eliminated ? 0 : (vm.grudgeTicks ?? 0);
@@ -288,7 +314,7 @@ class Chip {
       'aria-label',
       vm.eliminated
         ? `${vm.seat.name}, out${out ? `, taken by ${out.by.name}` : ''}`
-        : `${vm.seat.name}${pers ? `, ${pers.name}` : ''}: ${vm.territories} territories${vm.armies !== undefined ? `, ${vm.armies} armies` : ''}${held.length ? `, holds ${held.join(' and ')}` : ''}${vm.cards ? `, ${vm.cards} ${vm.cards === 1 ? 'card' : 'cards'}` : ''}${vm.grudge ? `, holds a grudge against ${vm.grudge.name}` : ''}${gt ? `, has taken ${gt} of yours` : ''}${standing}${ask ? '; tap to ask for peace' : ''}`,
+        : `${vm.seat.name}${pers ? `, ${pers.name}` : ''}: ${vm.territories} territories${vm.armies !== undefined ? `, ${vm.armies} armies` : ''}${held.length ? `, holds ${held.join(' and ')}` : ''}${vm.cards ? `, ${vm.cards} ${vm.cards === 1 ? 'card' : 'cards'}` : ''}${vm.grudge ? `, holds a grudge against ${vm.grudge.name}` : ''}${gt ? `, has taken ${gt} of yours` : ''}${standing}${x.threat && !vm.eliminated ? `, ${minus(x.threat)}` : ''}${cap ? (cap.held ? `, holds its capital ${cap.territory}` : `, lost its capital ${cap.territory}`) : ''}${ask ? '; click to ask for peace' : ''}`,
     );
     if (!prev) return;
     // Turn start (INK B4 "seat ring inks"): the ring is brushed in fresh ivory ink and dries into its wash
@@ -326,52 +352,26 @@ class Chip {
     return this.turn - this.voiceAt >= 2 ? '' : line;
   }
 
-  /** Under the ring: an AI's grudge tick, your grudge ticks, a tick per held continent (in its printed tint), then the card count. */
+  /**
+   * Under the ring (v6): the card count only, as a small brush card and its number. The tallies, grudge and
+   * continent ticks read as debug marks; what they meant is now said in words on the seat's card and, for a
+   * grudge, as one quiet line under the name ('took 3 of yours').
+   */
   private updateMarks(vm: SeatChipVM): void {
-    const conts = vm.eliminated ? [] : (vm.continents ?? []);
     const cards = vm.eliminated ? 0 : (vm.cards ?? 0);
-    const grudge = vm.eliminated ? null : (vm.grudge ?? null);
-    const ticks = vm.eliminated ? 0 : (vm.grudgeTicks ?? 0);
-    // Patched in place (a tick that goes dries out), so outside the rebuild below.
-    this.grudges.update(ticks, vm.seat.name, this.marksKey !== '');
-    const key = `${conts.join(',')}|${cards}|${grudge ? `${grudge.id}:${grudge.color}:${grudge.name}` : ''}|${ticks > 0 || this.grudges.el.childElementCount > 0}`;
-    if (key === this.marksKey) {
-      toggle(this.marks, 'empty', !this.marks.querySelector(':scope > :not(.hidden)'));
-      return;
-    }
+    const key = `${cards}`;
+    if (key === this.marksKey) return;
     this.marksKey = key;
     this.marks.textContent = '';
-    if (grudge) {
-      // one short brush tick, slanted (a continent's tick stands upright), in the grudged seat's colour
-      const g = h('span', 'sc-tick sc-grudge');
-      g.dataset.testid = `seat-grudge-${vm.seat.id}`;
-      g.dataset.against = String(grudge.id);
-      g.title = `Holds a grudge against ${grudge.name}`;
-      g.style.color = PLAYER_COLORS[grudge.color].light;
-      g.innerHTML = `<svg viewBox="0 0 6 12" aria-hidden="true"><path d="${brushMark([[4.6, 1.2], [1.5, 10.8]], { seed: 71 + grudge.id * 5, width: 2.8 })}" fill="currentColor"/></svg>`;
-      this.marks.append(g);
-    }
-    setStyle(this.grudges.el, 'color', PLAYER_COLORS[vm.seat.color].light);
-    this.marks.append(this.grudges.el);
-    for (const c of conts) {
-      const i = MAP.continentIds.indexOf(c);
-      const t = h('span', 'sc-tick');
-      t.dataset.continent = c;
-      t.title = `Holds ${MAP.continents[c]?.name ?? c}`;
-      t.style.color = continentInk(i, 0.4, MAP.continentIds.length);
-      t.innerHTML = `<svg viewBox="0 0 6 12" aria-hidden="true"><path d="${brushMark([[3.3, 0.9], [2.7, 11.1]], { seed: 31 + i * 7, width: 3 })}" fill="currentColor"/></svg>`;
-      this.marks.append(t);
-    }
     if (cards > 0) {
       const k = h('span', 'sc-cards num');
       k.dataset.testid = `seat-cards-${vm.seat.id}`;
-      k.title = `${cards} ${cards === 1 ? 'card' : 'cards'}`;
-      // a card in ink (square corners: no rounded rectangles anywhere): its face, a border, a hairline inside
-      k.innerHTML = `<svg viewBox="0 0 8 11" aria-hidden="true"><path d="M0.7 0.7 L7.3 0.6 L7.4 10.4 L0.6 10.4 Z" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-width="0.9"/><path d="M2 2 L6 2 L6 9 L2 9 Z" fill="none" stroke="currentColor" stroke-width="0.45" opacity="0.6"/></svg>`;
+      // a card back in ink: a slightly uneven brush edge, a second hairline inside (square corners)
+      k.innerHTML = `<svg viewBox="0 0 9 12" aria-hidden="true"><path d="M1 0.9 L8.1 0.7 L8.3 11.2 L0.8 11.3 Z" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-width="0.95" stroke-linejoin="round"/><path d="M2.6 2.6 L6.5 2.5 L6.6 9.4 L2.5 9.5 Z" fill="none" stroke="currentColor" stroke-width="0.5" opacity="0.7"/></svg>`;
       k.append(document.createTextNode(String(cards)));
       this.marks.append(k);
     }
-    toggle(this.marks, 'empty', !this.marks.querySelector(':scope > :not(.hidden)'));
+    toggle(this.marks, 'empty', cards === 0);
   }
 
   /** v5.1 A: the current seat's ring, filled in its pigment (a painted disc, not a flat circle). */
@@ -438,6 +438,10 @@ export class TopStrip {
   private tiesKey = '';
   /** v5.1 C: a ring that can be asked for peace was tapped (index.ts offers it in the one line). */
   onAsk: ((vm: SeatChipVM) => void) | null = null;
+  /** v6: the seat's card (mounted by index.ts on the HUD) and its touch sheet. */
+  readonly card = new SeatCard((id) => MAP.continents[id as keyof typeof MAP.continents]?.name ?? id);
+  /** The touch sheet's 'Ask Sage for peace' (index.ts sends it). */
+  onAskNow: ((seat: SeatChipVM['seat']) => void) | null = null;
 
   constructor(private send: (i: UiIntent) => void) {
     this.el = h('header', 'topstrip');
@@ -454,20 +458,23 @@ export class TopStrip {
     menu.type = 'button';
     menu.dataset.testid = 'menu';
     menu.setAttribute('aria-label', 'Menu');
-    this.menuMark = ensoEl(1, 'ts-enso', { small: true });
+    // v6: the menu has its own quiet mark, three short brush strokes (the ensō is the brand and the rule's mark,
+    // and in the corner it read as a loading spinner).
+    this.menuMark = svg('svg', { viewBox: '0 0 24 24', class: 'ts-strokes', 'aria-hidden': 'true' });
+    const rows: [number, number, number][] = [[5.2, 7.4, 18.6], [6, 12.2, 17.4], [5.6, 17, 18.2]];
+    rows.forEach(([x0, y, x1], i) => this.menuMark.append(svg('path', { d: brushMark([[x0, y + 0.25], [(x0 + x1) / 2, y - 0.2], [x1, y + 0.1]], { seed: 401 + i * 13, width: 1.9 }), fill: 'currentColor' })));
     menu.append(this.menuMark);
     menu.addEventListener('click', () => send({ type: 'overlay', overlay: 'pause' }));
     right.append(this.reset, menu);
     this.el.append(this.seats, right);
+    this.card.onAsk = (seat) => this.onAskNow?.(seat);
     this.ties = svg('svg', { class: 'ts-ties', 'aria-hidden': 'true' });
     this.seats.append(this.ties);
     new ResizeObserver(() => this.drawTies(true)).observe(this.seats);
   }
 
-  /** The game's ensō (seed = the game's seed) is the menu mark. */
-  setSeed(seed: number): void {
-    setEnso(this.menuMark, seed, { small: true });
-  }
+  /** v6: the menu mark no longer carries the game's ensō (it stays on the rule). */
+  setSeed(_seed: number): void {}
 
   update(vm: SeatChipVM[]): void {
     if (this.vm === vm) return;
@@ -475,6 +482,8 @@ export class TopStrip {
     while (this.chips.length < vm.length) {
       const c = new Chip(this.send);
       c.onAsk = (chip) => this.onAsk?.(chip);
+      c.onCard = (vm, el) => (vm ? this.card.show(vm, el.getBoundingClientRect()) : this.card.hide());
+      c.onTouchTap = (vm) => this.card.openSheet(vm);
       this.chips.push(c);
       this.seats.append(c.el);
     }
@@ -489,6 +498,7 @@ export class TopStrip {
       this.chips[i].turn = this.turn;
       this.chips[i].update(c);
     });
+    this.card.refresh(vm);
     this.drawTies(false);
   }
 

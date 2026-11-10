@@ -23,12 +23,16 @@ import { PLAYER_COLOR_IDS, PLAYER_COLORS } from '../../shared/palette';
 import { moreWord, Segmented, setMoreWord, Switch, uiButton } from '../controls';
 import { animateIn, emblem, ensoEl, h, hashSeed, motion, ringEl, setAttr, setEmblem, setStyle, setText, toggle, underlineEl } from '../dom';
 import { isPhone, layout } from '../layout';
-import { dragToDismiss, grabHandle, sheetIn } from '../sheet';
+import { dragToDismiss, grabHandle, sheetIn, watchScrollFade } from '../sheet';
+import type { LengthOptionX } from '../vmx';
 
 type Send = (i: UiIntent) => void;
 
 /** v5.1 D: the personality picker's default: random, and hidden from the table. */
 type PersPick = AiPersonality | 'any';
+
+/** '~40 min' → 'about 40 min' (a tilde in Cormorant reads as a minus sign). */
+const about = (s: string): string => s.replace(/~\s*/g, 'about ');
 
 /** v5 G: the Missions switch's one line. */
 const MISSIONS_LINE = 'Each seat gets a secret mission; completing it wins';
@@ -138,7 +142,11 @@ class SeatRow {
     this.remove.addEventListener('click', () => {
       if (this.remove.getAttribute('aria-disabled') !== 'true') send({ type: 'removeSeat', index: this.index });
     });
-    this.el.append(this.num, wrap, this.name, this.kind.el, this.diffWrap, this.persWrap, this.remove);
+    // v6: an AI seat's difficulty and personality sit on a line of their own under the name (More open), so the
+    // seat row itself never re-flows. Phones lay the two out in the row's own grid (display: contents).
+    const aiLine = h('div', 'seat-ai');
+    aiLine.append(this.diffWrap, this.persWrap);
+    this.el.append(this.num, wrap, this.name, this.kind.el, aiLine, this.remove);
   }
 
   setOpen(on: boolean): void {
@@ -231,6 +239,7 @@ class SeatRow {
     this.kind.set(seat.kind);
     this.diff.set(seat.difficulty);
     toggle(this.diffWrap, 'off', seat.kind !== 'ai');
+    toggle(this.el, 'is-ai', seat.kind === 'ai');
     setAttr(this.diffWrap, 'aria-hidden', seat.kind !== 'ai' ? 'true' : null);
     setAttr(this.remove, 'aria-disabled', canRemove ? null : 'true');
     toggle(this.remove, 'is-disabled', !canRemove);
@@ -380,6 +389,8 @@ export class NewGameScreen {
     seed: HTMLInputElement;
   };
   private vm: NewGameVM | null = null;
+  private lengthKey = '';
+  private vm0Lengths: NewGameVM['lengthOptions'] | null = null;
 
   constructor(private send: Send) {
     this.el = h('section', 'screen newgame-screen');
@@ -426,13 +437,13 @@ export class NewGameScreen {
     houseLabel.dataset.testid = 'house-toggle';
     const house = h('div', 'house');
     const patch = (p: Partial<HouseRulesDraft>) => send({ type: 'house', patch: p });
-    const draft = new Switch('Draft territories', (v) => patch({ draft: v }), 'Take turns claiming them · adds ~10 min', 'house-draft');
+    const draft = new Switch('Draft territories', (v) => patch({ draft: v }), 'Take turns claiming them · adds about 10 min', 'house-draft');
     const neutral = new Switch('Neutral armies', (v) => patch({ neutral: v }), 'Two players · a third army holds 14 territories', 'house-neutral');
     const missions = new Switch('Missions', (v) => patch({ missions: v }), MISSIONS_LINE, 'house-missions');
     const cards = new Segmented<HouseRulesDraft['cardBonus']>('seg-row', (v) => patch({ cardBonus: v }), 'Card values', 'house-cards');
     cards.setOptions([
       { value: 'progressive', label: 'Growing', detail: '4, 6, 8, 10 …' },
-      { value: 'fixed', label: 'Fixed', detail: '4 · 6 · 8 · 10' },
+      { value: 'fixed', label: 'Fixed', detail: '4 · 6 · 8 · 10 by symbol' },
     ]);
     const fortify = new Segmented<HouseRulesDraft['fortifyRule']>('seg-row', (v) => patch({ fortifyRule: v }), 'Fortify rule', 'house-fortify');
     fortify.setOptions([
@@ -497,6 +508,7 @@ export class NewGameScreen {
     foot.append(sumWrap, this.start);
     sheet.append(head, grid, foot);
     this.el.append(sheet);
+    watchScrollFade(grid);
     // One swatch popover at a time; a click anywhere else (or Esc, in src/ui/index.ts) closes it.
     this.el.addEventListener('click', () => this.closeSwatches());
   }
@@ -533,6 +545,12 @@ export class NewGameScreen {
     setMoreWord(this.moreBtn, on);
     toggle(this.more, 'hidden', !on);
     toggle(this.sheet, 'more-open', on);
+    // The advanced length (Full conquest) comes and goes with the fold.
+    if (this.vm) {
+      const vm = this.vm;
+      this.vm = null;
+      this.update(vm);
+    }
     if (on) {
       animateIn(this.more, { ms: 220, dy: -6 });
       // What just opened comes into view (the sheet scrolls; the seats stay one scroll above).
@@ -578,9 +596,18 @@ export class NewGameScreen {
     toggle(this.whereLabel, 'hidden', !offered.length);
     toggle(this.addBtn, 'hidden', !vm.canAddSeat);
 
-    this.length.setOptions(vm.lengthOptions.map((o) => ({ value: o.id, label: o.label, detail: o.detail, meta: o.estimate })));
+    // v6: 'Full conquest' (a length the controller marks `advanced`) lives under More: it shows only with the fold
+    // open, or while it is the chosen length. '~40 min' reads as '−40' in this serif: it says 'about 40 min'.
+    const moreOpen = this.isMoreOpen();
+    const lengths = (vm.lengthOptions as LengthOptionX[]).filter((o) => !o.advanced || moreOpen || o.id === vm.length);
+    const lkey = `${moreOpen}:${lengths.map((o) => o.id).join(',')}`;
+    if (lkey !== this.lengthKey || vm.lengthOptions !== this.vm0Lengths) {
+      this.lengthKey = lkey;
+      this.vm0Lengths = vm.lengthOptions;
+      this.length.setOptions(lengths.map((o) => ({ value: o.id, label: o.label, detail: about(o.detail), meta: about(o.estimate) })));
+    }
     this.length.set(vm.length);
-    this.setup.setOptions(vm.setupOptions.map((o) => ({ value: o.id, label: o.label, detail: o.detail })));
+    this.setup.setOptions(vm.setupOptions.map((o) => ({ value: o.id, label: o.label, detail: about(o.detail) })));
     this.setup.set(vm.setup);
 
     const hr = vm.house;

@@ -1,9 +1,9 @@
 // Card pictures (UX.md §7.5): the board's own ivory brush figures — soldier, rider, cannon — so a card
-// reads as the piece it stands for; the wild card is the ensō. Never told apart by colour. The figures
+// reads as the piece it stands for; the wild card is all three (v6: the ensō is the brand, not a card face). Never told apart by colour. The figures
 // are the unit sprites trimmed and downscaled to ~190 px WebP (public/icons/unit-*.webp, ~10 KB each).
 
 import type { CardSymbol } from '../../engine/types';
-import { ensoEl, h } from '../dom';
+import { h } from '../dom';
 
 const SPRITE: Partial<Record<CardSymbol, string>> = {
   infantry: 'soldier',
@@ -35,6 +35,18 @@ export function pictogram(symbol: CardSymbol, cls = 'picto'): HTMLElement {
     img.draggable = false;
     img.src = unitSrc(sprite as 'soldier');
     wrap.append(img);
-  } else wrap.append(ensoEl(7, 'enso', { small: true }));
+  } else {
+    // v6: the wild card is all three figures at once (the ensō is the brand, not a card face).
+    const trio = h('span', 'picto-trio');
+    for (const n of ['soldier', 'rider', 'cannon'] as const) {
+      const img = h('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.draggable = false;
+      img.src = unitSrc(n);
+      trio.append(img);
+    }
+    wrap.append(trio);
+  }
   return wrap;
 }

@@ -3,13 +3,15 @@
 //                slot; it dries after 4 s, at the first touch, or on rotating; never shown again.
 //   NameCard   — the territory's facts as a margin note (fight text, John 2026-10-05: "the name card
 //                becomes a margin note, for good"): name, its stone's history ('Siberia · 4 · held since
-//                the deal'), continent + bonus, owner, armies. It writes in ONE fixed place, never beside the
-//                pointer: desktop = the left margin under the seat strip (hover / select); touch = the dock's
+//                the deal'), continent + bonus, owner, armies. v6: on desktop it rides beside the pointer (the
+//                audit found it ~700 px away in the top-left, over Alaska), never on the territory it
+//                describes (hover / select); touch = the dock's
 //                line slot above the rule, two lines at most (long-press; release dries it). Serif words
 //                on the paper, no box, no background; it writes and dries like the one line. Driven by
 //                GameVM.nameCard (the controller never sends one while a fight is armed or its ring is up).
 
 import type { NameCardVM } from '../../game/viewModel';
+import type { NameCardVMx } from '../vmx';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
 import { layout, onLayout } from '../layout';
@@ -138,8 +140,29 @@ export class NameCard {
   private slot = false;
   /** Touch: the note owns the line slot (true at once) / gave it back (false once dried). */
   onShow: ((on: boolean) => void) | null = null;
+  /** v6 desktop: the pointer (client px) and the territory's box, so the note rides beside the pointer. */
+  private px = -1;
+  private py = -1;
+  private rect: { x: number; y: number; w: number; h: number } | null = null;
+  private placeQueued = false;
 
   constructor() {
+    window.addEventListener(
+      'pointermove',
+      (e) => {
+        if (e.pointerType !== 'mouse') return;
+        this.px = e.clientX;
+        this.py = e.clientY;
+        if (this.key !== -1 && !this.slot && !this.placeQueued) {
+          this.placeQueued = true;
+          requestAnimationFrame(() => {
+            this.placeQueued = false;
+            this.place();
+          });
+        }
+      },
+      { passive: true },
+    );
     this.el = h('div', 'name-card hidden');
     this.el.setAttribute('role', 'note');
     this.title = h('div', 'nc-title');
@@ -200,6 +223,44 @@ export class NameCard {
     };
   }
 
+  /**
+   * v6 desktop: the note rides beside the pointer. With the territory's box it sits just outside the box (to the
+   * right, or the left when there is no room), level with the pointer; without it, above and to the right of the
+   * pointer (below when there is no room above). Kept clear of the seat strip and the dock, inside the screen.
+   */
+  private place(): void {
+    if (this.slot || this.key === -1) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const w = this.el.offsetWidth || 240;
+    const hgt = this.el.offsetHeight || 90;
+    const topMin = (document.querySelector('.topstrip')?.getBoundingClientRect().bottom ?? 0) + 12;
+    const dock = document.querySelector('.strip')?.getBoundingClientRect().top ?? H;
+    const botMax = dock - 12;
+    const gap = 22;
+    let x: number;
+    let y: number;
+    const r = this.rect;
+    if (r) {
+      x = r.x + r.w + gap + w <= W - 12 ? r.x + r.w + gap : r.x - gap - w;
+      y = this.py - hgt / 2;
+      if (x < 12) {
+        // Neither side has room: above or below the box.
+        x = this.px - w / 2;
+        y = r.y - gap - hgt >= topMin ? r.y - gap - hgt : r.y + r.h + gap;
+      }
+    } else {
+      x = this.px + gap;
+      if (x + w > W - 12) x = this.px - gap - w;
+      y = this.py - gap - hgt;
+      if (y < topMin) y = this.py + gap + 6;
+    }
+    x = Math.max(12, Math.min(x, W - w - 12));
+    y = Math.max(topMin, Math.min(y, botMax - hgt));
+    this.el.style.left = `${Math.round(x)}px`;
+    this.el.style.top = `${Math.round(y)}px`;
+  }
+
   /** `now`: put it away at once (a fight is on: the note never shares the screen with it). */
   update(vm: NameCardVM | null | undefined, now = false): void {
     if (!vm) {
@@ -236,11 +297,80 @@ export class NameCard {
     const hidden = this.el.classList.contains('hidden');
     this.el.classList.remove('hidden');
     if (!this.slot) {
-      // The left margin, under the seat strip (≈ 90 px at 1440 × 900; lower if the seat strip is taller).
-      const top = document.querySelector('.topstrip')?.getBoundingClientRect().bottom ?? 0;
-      this.el.style.top = `${Math.round(Math.max(90, top + 24))}px`;
+      // v6: beside the pointer, never on the territory it describes (its box when the controller sends it).
+      this.rect = (vm as NameCardVMx).rect ?? null;
+      if (this.px < 0) {
+        this.px = vm.x;
+        this.py = vm.y;
+      }
+      this.place();
     } else if (!wasOn) this.onShow?.(true);
     // It writes in when it arrives on bare paper; moving from one territory to the next rewrites in place.
     if (fresh && (!wasOn || hidden) && !motion.reduced) drawIn(this.el, 220, this.slot ? 120 : 0);
+  }
+}
+
+const HOME_KEY = 'risk3d.homeHint.v1';
+
+/** Installed (Home Screen / app window): there is nothing to suggest. */
+function standalone(): boolean {
+  try {
+    return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * v6: on a phone in a browser tab, one plain line on the title, once per device: the browser's bars cost the
+ * board a fifth of a landscape screen. It dries after 8 s or at the first touch, and is never shown again.
+ */
+export class HomeHint {
+  readonly el: HTMLDivElement;
+  private shown = false;
+  private timer = 0;
+  private onTouch = () => this.dismiss();
+
+  constructor() {
+    this.el = h('div', 'home-hint hidden');
+    this.el.setAttribute('role', 'status');
+    this.el.dataset.testid = 'home-hint';
+    const ios = /iP(hone|od|ad)/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    this.el.append(h('span', 'hh-text', ios ? 'For the full screen: Share, then Add to Home Screen' : 'For the full screen: add War Table to your Home Screen'));
+  }
+
+  /** Call on every render; `force` shows it regardless (the gallery). */
+  update(onTitle: boolean, force = false): void {
+    if (this.shown) {
+      if (!onTitle) this.dismiss();
+      return;
+    }
+    if (!force) {
+      if (!onTitle || layout.form !== 'phone' || standalone()) return;
+      try {
+        if (localStorage.getItem(HOME_KEY) === '1') return;
+        localStorage.setItem(HOME_KEY, '1');
+      } catch {
+        return;
+      }
+    }
+    this.shown = true;
+    this.el.classList.remove('hidden');
+    drawIn(this.el, 320, 900);
+    this.timer = window.setTimeout(() => this.dismiss(), 8000);
+    window.setTimeout(() => window.addEventListener('pointerdown', this.onTouch, { capture: true, passive: true }), 400);
+  }
+
+  dismiss(): void {
+    if (!this.shown) return;
+    this.shown = false;
+    window.clearTimeout(this.timer);
+    window.removeEventListener('pointerdown', this.onTouch, { capture: true });
+    if (motion.reduced || typeof this.el.animate !== 'function') return void this.el.classList.add('hidden');
+    const a = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: EASE_IN_QUAD, fill: 'forwards' });
+    a.onfinish = () => {
+      this.el.classList.add('hidden');
+      a.cancel();
+    };
   }
 }

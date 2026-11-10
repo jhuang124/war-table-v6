@@ -235,6 +235,7 @@ export class Segmented<T extends string | number> {
 export class Switch {
   readonly el: HTMLButtonElement;
   private on: boolean | null = null;
+  private state: HTMLSpanElement;
   constructor(label: string, private onFlip: (v: boolean) => void, detail?: string, testid?: string) {
     this.el = h('button', 'switch');
     if (testid) this.el.dataset.testid = testid;
@@ -248,7 +249,11 @@ export class Switch {
     const knob = h('span', 'switch-knob');
     knob.append(ringEl(hashSeed(`switch-${testid ?? label}`), 1, undefined, { cls: 'knob-ring', weight: 1.5 }));
     track.append(knob);
-    this.el.append(text, track);
+    // v6: the state as a word beside the track ('On' / 'Off'), and the knob inked solid when on: never a guess.
+    this.state = h('span', 'switch-state', 'Off');
+    const end = h('span', 'switch-end');
+    end.append(this.state, track);
+    this.el.append(text, end);
     this.el.addEventListener('click', () => this.onFlip(!this.on));
   }
   set(v: boolean): void {
@@ -256,6 +261,7 @@ export class Switch {
     this.on = v;
     toggle(this.el, 'on', v);
     this.el.setAttribute('aria-checked', v ? 'true' : 'false');
+    this.state.textContent = v ? 'On' : 'Off';
   }
 }
 

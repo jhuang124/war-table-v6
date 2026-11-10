@@ -742,6 +742,28 @@ class GoldRule {
       this.el.classList.remove('sr-cut');
     }
   }
+  /**
+   * v6: the turn passes to another seat. For one second a wash of that seat's pigment runs along the rule from
+   * the left and settles back into the gold (the rule is never permanently coloured: the gold is the one thing
+   * to do now).
+   */
+  wash(pigment: string): void {
+    if (motion.reduced || typeof this.el.animate !== 'function') return;
+    this.el.querySelector('.sr-wash')?.remove();
+    const w = h('i', 'sr-wash');
+    w.style.setProperty('--wash', pigment);
+    this.el.insertBefore(w, this.el.firstChild);
+    const a = w.animate(
+      [
+        { clipPath: 'inset(0 100% 0 0)', opacity: 1 },
+        { clipPath: 'inset(0 0% 0 0)', opacity: 1, offset: 0.55 },
+        { clipPath: 'inset(0 0% 0 0)', opacity: 1, offset: 0.72 },
+        { clipPath: 'inset(0 0% 0 0)', opacity: 0 },
+      ],
+      { duration: 1000, easing: 'cubic-bezier(0.45, 0, 0.3, 1)', fill: 'forwards' },
+    );
+    a.onfinish = () => w.remove();
+  }
   /** Turn start: the rule redraws outward from wherever the ensō is (400 ms). */
   redraw(): void {
     if (motion.reduced || typeof this.l.animate !== 'function') return;
@@ -776,6 +798,9 @@ export class BottomStrip {
   private hold = new Holding();
   private breakdown = new Breakdown();
   private holdVm: GameVM['holding'] = null;
+  /** v6: 'Cards 3' whenever it is your turn and the controller sends the hand (it used to be Place only). */
+  private cardsWord: HTMLButtonElement;
+  private cardsOpen = false;
   private vm: StripVM | null = null;
   private gold: GoldVM | undefined = undefined;
   private turnKey = '';
@@ -804,6 +829,12 @@ export class BottomStrip {
       this.paintCount(c, true);
     });
     this.count.append(this.countWord, this.stepper.el, this.slider.el);
+    this.stepper.el.querySelector('.sp-n')?.addEventListener('click', () => {
+      const c = this.vm?.count;
+      if (!c?.collapsed || c.control !== 'slider' || layout.form === 'phone' || this.countOpenKey === countKey(c)) return;
+      this.countOpenKey = countKey(c);
+      this.paintCount(c, true);
+    });
     this.buttons = new Buttons((b) => send({ type: 'button', id: b.id }));
     const zone = (this.zone = h('div', 'st-zone'));
     zone.dataset.testid = 'action-zone';
@@ -838,12 +869,15 @@ export class BottomStrip {
     };
     this.el.append(this.say, this.rule.el, this.seat.el, this.track.el, zone);
     this.say.append(this.breakdown.el);
+    this.cardsWord = uiButton('Cards', 'role-exit st-cards hidden', () => send({ type: 'cardsPanel', open: !this.cardsOpen }), undefined, 'cards-anytime');
     this.rule.onTap = () => send({ type: 'tapEnso' });
     // The holding dab: beside the seat mark on the desktop strip; in the action row on the phone dock.
     const placeHold = () => {
       const phone = layout.form === 'phone' || layout.stacked;
       if (phone && this.hold.el.parentElement !== zone) zone.prepend(this.hold.el);
       else if (!phone && this.hold.el.parentElement !== this.seat.el) this.seat.el.append(this.hold.el);
+      if (phone && this.cardsWord.parentElement !== zone) zone.prepend(this.cardsWord);
+      else if (!phone && this.cardsWord.parentElement !== this.seat.el) this.seat.el.append(this.cardsWord);
     };
     placeHold();
     onLayout(placeHold);
@@ -910,6 +944,21 @@ export class BottomStrip {
     setText(this.latest, last ? minus(last.text) : '');
   }
 
+  /**
+   * v6: your hand is a word away whenever it is your turn: 'Cards 3' beside the seat mark (desktop) or at the head of
+   * the action row (phones), unless the strip already offers `Cards N` itself. Shown only when the controller sends
+   * the hand (GameVM.cards) and the turn is yours.
+   */
+  setCards(cards: GameVM['cards'], live: boolean): void {
+    this.cardsOpen = !!cards?.open;
+    const n = cards?.hand.length ?? 0;
+    const own = !!this.vm?.buttons.some((b) => b.id === 'cards');
+    const on = !!cards && live && n > 0 && !own;
+    toggle(this.cardsWord, 'hidden', !on);
+    if (on) setText(this.cardsWord.querySelector('.btn-label')!, `Cards ${n}`);
+    if (this.vm) toggle(this.zone, 'is-empty', !this.vm.count && this.vm.buttons.length === 0 && !this.ask && !this.holdsInZone() && !(on && this.cardsWord.parentElement === this.zone));
+  }
+
   private holdsInZone(): boolean {
     return !!this.holdVm && this.hold.el.parentElement === this.zone;
   }
@@ -960,26 +1009,26 @@ export class BottomStrip {
     this.line.update(vm.line, voice ? 'narration' : vm.lineKind, vm.lineKey, voice ? PLAYER_COLORS[voice.color].light : vm.lineKind === 'narration' ? PLAYER_COLORS[vm.track.seat.color].light : null);
   }
 
-  /** The count: collapsed = its number as a bare word (a tap opens it); otherwise the stepper or slider. */
+  /**
+   * The count. v6: it always reads as something you can change. A folded count (the default already chosen) is the
+   * − N + stepper, its number at the default (the slider opens only when asked for: a click on the number); phones
+   * never get the hairline slider (about 6 px a step under a thumb): − N + with hold-to-repeat, whatever the range.
+   */
   private paintCount(c: CountVM | null, opened = false): void {
     const folded = !!c?.collapsed && this.countOpenKey !== countKey(c);
     if (!c) this.countOpenKey = '';
+    const thumb = layout.form === 'phone';
+    const ctl: CountVM['control'] | null = !c ? null : thumb || folded ? 'stepper' : c.control;
     toggle(this.count, 'hidden', !c);
     toggle(this.count, 'is-collapsed', folded);
-    toggle(this.countWord, 'hidden', !folded);
-    if (c && folded) {
-      setText(this.countWord, String(c.value));
-      this.countWord.setAttribute('aria-label', `${c.value} of ${c.max}: change the count`);
-    }
-    toggle(this.stepper.el, 'hidden', folded || c?.control !== 'stepper');
-    toggle(this.slider.el, 'hidden', folded || c?.control !== 'slider');
-    if (c?.control === 'stepper' && !folded) this.stepper.update(c);
+    toggle(this.countWord, 'hidden', true);
+    toggle(this.stepper.el, 'hidden', ctl !== 'stepper');
+    toggle(this.slider.el, 'hidden', ctl !== 'slider');
+    toggle(this.stepper.el, 'can-open', folded && !thumb && c?.control === 'slider');
+    if (c && ctl === 'stepper') this.stepper.update(c);
     else this.stepper.reset();
-    if (c?.control === 'slider' && !folded) this.slider.update(c);
-    if (opened) {
-      const el = c?.control === 'slider' ? this.slider.el : this.stepper.el;
-      drawIn(el, 200);
-    }
+    if (c && ctl === 'slider') this.slider.update(c);
+    if (opened) drawIn(ctl === 'slider' ? this.slider.el : this.stepper.el, 200);
   }
 
   /** Another line owns the slot (a breath line, the rotate hint): the strip's line steps aside. */
@@ -1005,6 +1054,8 @@ export class BottomStrip {
     this.el.dataset.mode = vm.mode;
     if (vm.track.turnKey !== this.turnKey) {
       if (prev) this.rule.redraw();
+      // v6: between two seats, the incoming seat's pigment runs along the rule for a second.
+      if (prev && prev.track.seat.id !== vm.track.seat.id) this.rule.wash(PLAYER_COLORS[vm.track.seat.color]?.base ?? 'var(--ivory)');
       this.turnKey = vm.track.turnKey;
     }
     this.seat.update(vm.track.seat);

@@ -11,9 +11,10 @@ import type { PlayerStats } from '../../engine/types';
 import type { UiIntent, VictoryVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { uiButton } from '../controls';
-import { drawEnso, drawIn, EASE_BRUSH, emblem, ensoEl, h, hashSeed, minus, motion, setEnso, setStyle, svg, toggle } from '../dom';
+import { drawIn, EASE_BRUSH, emblem, h, hashSeed, minus, motion, ringEl, setStyle, svg, toggle } from '../dom';
 import { isPhone } from '../layout';
-import { sheetDrop, sheetIn } from '../sheet';
+import { sheetDrop, sheetIn, watchScrollFade } from '../sheet';
+import { victoryX } from '../vmx';
 
 type Send = (i: UiIntent) => void;
 
@@ -112,13 +113,26 @@ export class TerritoryChart {
   }
 }
 
+/**
+ * The hero line: the winner's name first, in their own pigment, then the rest ('John holds the world'). Shared
+ * with the replay, which shows it from its first frame.
+ */
+export function heroLine(el: HTMLElement, text: string, winner: { name: string }): void {
+  el.textContent = '';
+  const t = minus(plain(text));
+  if (t.startsWith(winner.name)) el.append(h('span', 'v-who', winner.name), document.createTextNode(t.slice(winner.name.length)));
+  else el.textContent = t;
+}
+
 export class VictoryScreen {
   readonly el: HTMLElement;
   private vm: VictoryVM | null = null;
   private scroll: HTMLDivElement;
-  private mark: SVGSVGElement;
+  private body: HTMLDivElement;
+  private mark: HTMLSpanElement;
   private title: HTMLHeadingElement;
   private sub: HTMLParagraphElement;
+  private called: HTMLParagraphElement;
   private awards: HTMLDivElement;
   private moments: HTMLDivElement;
   private chart = new TerritoryChart();
@@ -132,12 +146,22 @@ export class VictoryScreen {
 
   constructor(send: Send) {
     this.el = h('section', 'screen victory-screen');
+    // v6: the sheet is a payoff, not a table. One hero line (the winner's name first, in their pigment), the
+    // story in two or three beats, the chart, then the row. The row is pinned: whatever the sheet holds, it
+    // scrolls above the row and Rematch never leaves the screen. Awards, standings and the numbers fold under
+    // Full stats.
     this.scroll = h('div', 'v-scroll sheet');
+    this.body = h('div', 'v-body scroll-fade');
     const head = h('div', 'v-head');
-    this.mark = ensoEl(1, 'enso v-enso', { drawable: true });
+    // The winner's emblem in a closed brush ring (the ensō stays the brand and the rule's mark).
+    this.mark = h('span', 'v-crest');
+    this.mark.setAttribute('aria-hidden', 'true');
     this.title = h('h1', 'v-title');
+    this.title.dataset.testid = 'victory-title';
     this.sub = h('p', 'v-sub num');
-    head.append(this.mark, this.title, this.sub);
+    this.called = h('p', 'v-called num hidden');
+    this.called.dataset.testid = 'victory-called';
+    head.append(this.mark, this.title, this.sub, this.called);
     this.awards = h('div', 'v-awards');
     this.moments = h('div', 'v-moments hidden');
     this.moments.dataset.testid = 'moments';
@@ -145,8 +169,9 @@ export class VictoryScreen {
     const chartWrap = h('div', 'v-chart');
     chartWrap.append(this.chart.el);
     this.standings = h('ol', 'standings');
-    mid.append(chartWrap, this.standings);
+    mid.append(chartWrap);
     this.stats = h('div', 'v-stats hidden');
+    this.stats.dataset.testid = 'victory-full-stats';
     const actions = h('div', 'v-actions');
     this.statsBtn = uiButton('Full stats', 'role-exit', () => this.setStats(!this.statsOpen), undefined, 'victory-stats');
     actions.append(
@@ -156,8 +181,10 @@ export class VictoryScreen {
       h('span', 'v-spacer'),
       this.statsBtn,
     );
-    this.scroll.append(head, this.moments, this.awards, mid, actions, this.stats);
+    this.body.append(head, this.moments, mid, this.stats);
+    this.scroll.append(this.body, actions);
     this.el.append(h('div', 'v-scrim'), this.scroll);
+    watchScrollFade(this.body);
     let rt = 0;
     window.addEventListener('resize', () => {
       window.clearTimeout(rt);
@@ -178,8 +205,10 @@ export class VictoryScreen {
     this.statsBtn.querySelector('.btn-label')!.textContent = on ? 'Hide stats' : 'Full stats';
     if (on) {
       drawIn(this.stats, 240);
-      this.stats.scrollIntoView({ block: 'nearest', behavior: motion.reduced ? 'auto' : 'smooth' });
+      const to = this.stats.offsetTop - this.body.offsetTop - 12;
+      this.body.scrollTo({ top: to, behavior: motion.reduced ? 'auto' : 'smooth' });
     }
+    requestAnimationFrame(() => this.body.dispatchEvent(new Event('scroll')));
   }
 
   update(vm: VictoryVM | null, active: boolean, moments?: string[] | null): void {
@@ -199,11 +228,16 @@ export class VictoryScreen {
     setStyle(this.el, '--seat', pal.base);
     setStyle(this.el, '--seat-light', pal.light);
     const seed = vm.seed ?? hashSeed(vm.seats.map((s) => `${s.name}:${s.color}`).join('|'));
-    setEnso(this.mark, seed, { drawable: true });
-    this.title.textContent = minus(plain(vm.title));
+    this.mark.textContent = '';
+    this.mark.append(ringEl(seed, 1, undefined, { cls: 'v-crest-ring', weight: 1.6 }), emblem(vm.winner.color, 'emb v-crest-emb', 'light'));
+    heroLine(this.title, vm.title, vm.winner);
     this.sub.textContent = minus(vm.subline);
+    const called = victoryX(vm).called ?? null;
+    toggle(this.called, 'hidden', !called);
+    this.called.textContent = called ? minus(called) : '';
 
-    // Turning points (v5 C): the story of the war in three sentences, above the awards.
+    // The story (v5 C turning points): two or three plain sentences. A game without named moments tells its
+    // awards instead, so the sheet always has its beats.
     this.moments.textContent = '';
     const told = (vm.moments ?? moments ?? []).filter(Boolean).slice(0, 3);
     for (const m of told) {
@@ -214,7 +248,8 @@ export class VictoryScreen {
       else line.textContent = t;
       this.moments.append(line);
     }
-    toggle(this.moments, 'hidden', told.length === 0);
+    if (!told.length) for (const a of vm.awards.slice(0, 3)) this.moments.append(h('p', 'mo-line num', minus(a.text)));
+    toggle(this.moments, 'hidden', this.moments.childElementCount === 0);
 
     // Awards: three lines. Nemesis first — the grudge is the story of the evening.
     this.awards.textContent = '';
@@ -269,27 +304,26 @@ export class VictoryScreen {
       tb.append(tr);
     }
     table.append(thead, tb);
-    this.stats.append(table);
+    // Full stats: the awards and the standings first (words), then the numbers.
+    this.stats.append(this.awards, this.standings, table);
+    toggle(this.standings, 'hidden', vm.standings.length <= 1);
     this.setStats(false);
-    this.scroll.scrollTop = 0;
+    this.body.scrollTop = 0;
     this.el.scrollTop = 0;
 
-    // The recap is a sheet of paper laid on the board (v4 E8): it comes down from the top edge (phones:
-    // it rises), the ensō draws itself, the words are brushed on after it.
+    // The recap is a sheet of paper laid on the board (v4 E8): it comes down from the top edge (phones: it
+    // rises). The winner's name is on it from the first frame (the replay already said it); the rest is brushed
+    // on quickly after, and the row is there at once.
     this.chart.render(vm, !motion.reduced);
     if (!motion.reduced) this.el.querySelector('.v-scrim')!.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, easing: 'ease-out' });
     if (isPhone()) sheetIn(this.scroll);
-    else sheetDrop(this.scroll, null, 480);
-    drawEnso(this.mark, 900, 120);
-    drawIn(this.title, 360, 420);
-    drawIn(this.sub, 280, 620);
-    [...this.moments.children].forEach((c, i) => drawIn(c as HTMLElement, 300, 700 + i * 140));
-    const after = told.length ? 700 + told.length * 140 + 120 : 760;
-    [...this.awards.children].forEach((c, i) => drawIn(c as HTMLElement, 260, after + i * 120));
-    for (const el of this.scroll.querySelectorAll<HTMLElement>('.v-mid, .v-actions'))
-      if (!motion.reduced) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 900, easing: 'ease-out', fill: 'backwards' });
+    else sheetDrop(this.scroll, null, 420);
+    drawIn(this.sub, 260, 260);
+    [...this.moments.children].forEach((c, i) => drawIn(c as HTMLElement, 280, 360 + i * 120));
+    if (!motion.reduced) this.body.querySelector('.v-mid')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 500, easing: 'ease-out', fill: 'backwards' });
     this.timers.forEach((t) => clearTimeout(t));
-    this.timers = [window.setTimeout(() => (this.phase = 'full'), 1400)];
+    this.timers = [window.setTimeout(() => (this.phase = 'full'), 900)];
+    requestAnimationFrame(() => this.body.dispatchEvent(new Event('scroll')));
   }
 
   refreshChart(): void {

@@ -14,15 +14,14 @@
 // ViewModel identity (the controller keeps unchanged subtrees identical), so an idle frame costs a few
 // reference compares and no DOM writes.
 
-// One family (INK B3). index.html preloads the same files with font-display: block; this import also
-// covers pages without that head (the UI gallery).
-import '@fontsource-variable/cormorant-garamond/wght.css';
-import '@fontsource-variable/cormorant-garamond/wght-italic.css';
+// One family (INK B3), declared once: index.html (and ui-gallery.html) declare Cormorant Garamond from public/fonts
+// with font-display: block. v6: the @fontsource imports went (they declared the same family a second time and every
+// cold visit downloaded both copies, ~77 KB).
 import './styles.css';
 import './mobile.css';
 import type { GameVM, MountUi, Screen, SeatChipVM, SeatRef, StripVM, UiIntent, ViewModel } from '../game/viewModel';
 import type { ViewportInsets } from '../render/BoardView';
-import { h, hashSeed, motion, setAttr, toggle } from './dom';
+import { EASE_BRUSH, h, hashSeed, motion, setAttr, toggle } from './dom';
 import { boardTrayGeometry as trayGeometry, inkTrayTop } from '../shared/tray';
 import { Announcements } from './hud/announce';
 import { CardsSheet } from './hud/cards';
@@ -34,7 +33,8 @@ import { TitleScreen } from './screens/title';
 import { VictoryScreen } from './screens/victory';
 import { effectiveUiScale, isFitted } from './uiScale';
 import { installLayout, layout, onLayout } from './layout';
-import { NameCard, RotatePill } from './hud/mobile';
+import { HomeHint, NameCard, RotatePill } from './hud/mobile';
+import { KeysSheet } from './hud/keys';
 import { Replay } from './hud/replay';
 import { resetSheet, sheetDrop, sheetLift } from './sheet';
 
@@ -79,6 +79,8 @@ function worldHolder(g: GameVM): SeatChipVM | null {
 interface Instance {
   newGame: NewGameScreen;
   victory: VictoryScreen;
+  keys: KeysSheet;
+  home: HomeHint;
 }
 let current: Instance | null = null;
 
@@ -90,6 +92,9 @@ export function uiDebug() {
     /** v5.1: the house rules live in the 'More' fold now. */
     openHouseRules: () => c?.newGame.setMoreOpen(true),
     skipVictoryIntro: () => c?.victory.showFull(),
+    /** v6: the `?` keys sheet, and the phone's one-time Add to Home Screen line. */
+    openKeys: (on = true) => c?.keys.set(on),
+    homeHint: (on = true) => (on ? c?.home.update(true, true) : c?.home.dismiss()),
   };
 }
 
@@ -117,7 +122,7 @@ export const mountUi: MountUi = (host, api) => {
   // (strip.ts): nothing rides on the dice ring.
   const rotate = new RotatePill();
   const nameCard = new NameCard();
-  hud.append(top.el, strip.el, cards.scrim, cards.el, bandProbe);
+  hud.append(top.el, strip.el, cards.scrim, cards.el, bandProbe, top.card.el, top.card.scrim);
   // The breath line and the rotate hint sit on the paper exactly where the strip's line does.
   const sayEl = strip.el.querySelector<HTMLElement>('.st-say')!;
   sayEl.append(announce.el, rotate.el);
@@ -163,11 +168,13 @@ export const mountUi: MountUi = (host, api) => {
   // The war in ink (v5 C): the end-of-game time-lapse's paper strip; the recap is held back while it plays.
   const replay = new Replay(send);
   // A lost WebGL context (mobile GPUs drop it under memory pressure): a quiet pill while the board rebuilds.
+  const keys = new KeysSheet();
+  const home = new HomeHint();
   const lost = h('div', 'board-lost hidden', 'Reloading the board…');
   lost.setAttribute('role', 'status');
   lost.dataset.testid = 'board-lost';
-  root.append(hud, title.el, newGame.el, victory.el, replay.el, overlays.el, confirm.el, lost);
-  current = { newGame, victory };
+  root.append(hud, title.el, newGame.el, victory.el, replay.el, overlays.el, confirm.el, keys.el, home.el, lost);
+  current = { newGame, victory, keys, home };
 
   const screens: Partial<Record<Screen, HTMLElement>> = { title: title.el, newGame: newGame.el, victory: victory.el };
   for (const el of Object.values(screens)) el!.classList.add('off');
@@ -207,9 +214,32 @@ export const mountUi: MountUi = (host, api) => {
     }
     if (next === 'newGame' && prev !== 'newGame') newGame.onEnter();
     if (next === 'newGame') requestAnimationFrame(() => screen === 'newGame' && !vm?.overlay && newGame.focusFirstName());
-    if (next !== 'boot' && boot) {
+    if (next !== 'boot' && boot?.isConnected) {
       const b = boot;
-      b.animate([{ opacity: getComputedStyle(b).opacity }, { opacity: 0 }], { duration: 240, fill: 'forwards' }).onfinish = () => b.remove();
+      const op = Number(getComputedStyle(b).opacity) || 0;
+      const lock = b.querySelector<HTMLElement>('.bs-lock');
+      if (next === 'title' && lock && op > 0.3 && !motion.reduced) {
+        // v6: one lockup. The splash's lockup glides onto the title's (same lettering, same gold) while the paper
+        // behind it clears to the board; the title's own lockup takes over where it lands.
+        title.fromSplash = true;
+        const target = title.lockup.name.closest<HTMLElement>('.lockup')!;
+        target.style.opacity = '0';
+        requestAnimationFrame(() => {
+          const sName = lock.querySelector<HTMLElement>('.bs-name')!.getBoundingClientRect();
+          const tName = title.lockup.name.getBoundingClientRect();
+          const k = tName.height && sName.height ? tName.height / sName.height : 1;
+          const sl = lock.getBoundingClientRect();
+          const tl = target.getBoundingClientRect();
+          const dx = tl.left + tl.width / 2 - (sl.left + sl.width / 2);
+          const dy = tName.top + tName.height / 2 - (sName.top + sName.height / 2) - (k - 1) * (sName.top + sName.height / 2 - (sl.top + sl.height / 2));
+          lock.animate([{ transform: 'none' }, { transform: `translate(${dx}px, ${dy}px) scale(${k})` }], { duration: 520, easing: EASE_BRUSH, fill: 'forwards' });
+          b.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 520, easing: 'ease-out', fill: 'forwards', pseudoElement: '::before' });
+          window.setTimeout(() => {
+            target.style.opacity = '';
+            b.animate([{ opacity: op }, { opacity: 0 }], { duration: 120, fill: 'forwards' }).onfinish = () => b.remove();
+          }, 540);
+        });
+      } else b.animate([{ opacity: op }, { opacity: 0 }], { duration: 240, fill: 'forwards' }).onfinish = () => b.remove();
     }
   };
 
@@ -379,6 +409,11 @@ export const mountUi: MountUi = (host, api) => {
     if (!c?.canAskPeace || c.eliminated || g.confirm) setAsk(null);
   };
   top.onAsk = (c) => setAsk(c.seat);
+  // v6 touch: the seat sheet's 'Ask Sage for peace' is already a deliberate press: it asks at once.
+  top.onAskNow = (seat) => {
+    setAsk(null);
+    send({ type: 'askPeace', to: seat.id });
+  };
   strip.onAsk = (seat) => {
     setAsk(null);
     send({ type: 'askPeace', to: seat.id });
@@ -413,11 +448,13 @@ export const mountUi: MountUi = (host, api) => {
     toggle(lost, 'hidden', !next.boardLost);
 
     if (next.screen === 'title' || next.overlay || prev?.screen === 'title') title.update(next);
+    home.update(next.screen === 'title' && !next.overlay);
+    if (next.overlay || next.screen === 'newGame' || next.screen === 'victory') keys.set(false);
     if (next.screen === 'newGame') newGame.update(next.newGame);
     const rp = next.game?.replay ?? null;
     if (rp) lastMoments = rp.moments;
     else if (next.screen !== 'victory' && prev?.screen === 'victory') lastMoments = null;
-    replay.update(rp);
+    replay.update(rp, next.victory);
     syncVictory(next);
 
     const g = next.game;
@@ -438,6 +475,7 @@ export const mountUi: MountUi = (host, api) => {
       strip.update(stripFor(g), worldHolder(g) ? null : g.gold);
       strip.setEvents(g.events, g.round, !!g.updateReady);
       strip.setHolding(g.holding);
+      strip.setCards(g.cards, g.strip.track.live);
       // Ambient motion yields to the strike (INK A1): the rule's glint and breath rest while dice roll.
       toggle(root, 'is-striking', !!g.battle?.rolling);
       announce.update(g.banner);
@@ -528,6 +566,13 @@ export const mountUi: MountUi = (host, api) => {
       e.stopPropagation();
     };
     if (e.repeat && (e.key === 'Enter' || e.key === ' ')) return stop();
+    // v6: `?` lays the keys sheet on the board; while it is up, `?` / Esc put it away and nothing else acts.
+    if (keys.isOpen) {
+      if (e.key === 'Escape' || e.key === '?') (stop(), keys.set(false));
+      else if (e.key !== 'Tab') stop();
+      return;
+    }
+    if (e.key === '?' && !v.overlay && !g?.confirm && (v.screen === 'game' || v.screen === 'title')) return void (stop(), keys.set(true));
     // The replay: any key skips it (and does nothing else).
     if (replay.active && !v.overlay && !['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock'].includes(e.key)) return void (stop(), replay.skip());
     if (g?.confirm && v.screen === 'game') {

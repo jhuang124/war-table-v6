@@ -5,7 +5,8 @@
 // inside the same ring); the rest are bare words.
 
 // v4 §7.13: the Continue word carries a small ink thumbnail of the board as it was left (territory tints
-// only, 120 × 60), beside it on the paper, outside its ring.
+// only, 120 × 60), beside it on the paper, outside its ring. v6: the thumbnail is a vignetted plate (no hard
+// edge), the summary sits under the word outside the ring, and the ring stays the word's own size.
 
 import type { SaveSketchVM, UiIntent, ViewModel } from '../../game/viewModel';
 import type { PlayerColorId, TerritoryId } from '../../engine/types';
@@ -77,7 +78,17 @@ export class TitleScreen {
     this.el = h('section', 'screen title-screen');
     const col = h('div', 'title-col');
     const lock = h('div', 'lockup');
-    this.name = h('h1', 'lk-name', 'War Table');
+    // v6: the wordmark is lettered, not typed: capitals, open tracking, each pair set by hand (the W and the A
+    // tuck in, the T's bar overhangs), the paper deepened behind it so board labels never show through.
+    this.name = h('h1', 'lk-name');
+    this.name.setAttribute('aria-label', 'War Table');
+    const KERN: [string, number][] = [['W', -0.07], ['A', 0.01], ['R', 0], [' ', 0], ['T', -0.05], ['A', 0.0], ['B', 0], ['L', -0.02], ['E', 0]];
+    for (const [ch, k] of KERN) {
+      const g = h('span', ch === ' ' ? 'lk-gap' : 'lk-ch', ch === ' ' ? '' : ch);
+      g.setAttribute('aria-hidden', 'true');
+      if (k) g.style.marginRight = `${k}em`;
+      this.name.append(g);
+    }
     const rule = h('div', 'lk-rule');
     this.mark = ensoEl(TITLE_SEED, 'enso lk-enso', { drawable: true });
     rule.append(h('i', 'lk-half'), this.mark, h('i', 'lk-half'));
@@ -87,7 +98,9 @@ export class TitleScreen {
     // Both can be the primary (it depends on a save): each carries a ring, shown only while it is the gold.
     this.ng = uiButton('New game', 'title-item ringable', () => send({ type: 'nav', screen: 'newGame' }), undefined, 'title-new');
     this.cont = uiButton('Continue', 'title-item continue ringable', () => send({ type: 'continue' }), undefined, 'title-continue');
-    this.contSub = h('span', 'btn-sub num');
+    // v6: the save's summary sits under the word, outside its ring (the ring stays a word's ring, never a long
+    // ellipse round two lines).
+    this.contSub = h('span', 'btn-sub cont-sub num ring-skip');
     // The thumbnail sits beside the word on the paper (outside the ring: `ring-skip`), part of its press.
     this.thumb = h('canvas', 'cont-thumb ring-skip hidden');
     this.thumb.dataset.testid = 'continue-thumb';
@@ -98,6 +111,14 @@ export class TitleScreen {
     menu.append(this.ng, this.cont, rules, settings);
     col.append(lock, menu);
     this.el.append(h('div', 'title-scrim'), col);
+  }
+
+  /** v6: the boot splash is gliding into this lockup (index.ts): the lockup is already drawn. */
+  fromSplash = false;
+
+  /** The lockup's name and ensō, for the splash to glide onto. */
+  get lockup(): { name: HTMLElement; mark: SVGSVGElement } {
+    return { name: this.name, mark: this.mark };
   }
 
   /** Kept for the root's call (the fitted-text note now lives only in Settings). */
@@ -125,9 +146,13 @@ export class TitleScreen {
     setEnso(this.mark, TITLE_SEED, { drawable: true });
     if (vm.screen === 'title' && !this.drawn) {
       this.drawn = true;
-      // Arrival: the name is brushed on, then the ensō draws itself round once; the words follow.
-      drawIn(this.name, 420);
-      drawEnso(this.mark, 900, motion.reduced ? 0 : 180);
+      // Arrival: the name is brushed on, then the ensō draws itself round once; the words follow. Arriving from the
+      // boot splash the lockup is already on the paper (the splash glided into it): only the words follow.
+      if (!this.fromSplash) {
+        drawIn(this.name, 420);
+        drawEnso(this.mark, 900, motion.reduced ? 0 : 180);
+      }
+      this.fromSplash = false;
       if (!motion.reduced) [...this.menu.children].forEach((c, i) => drawIn(c as HTMLElement, 260, 420 + i * 70));
     }
     if (vm.screen !== 'title') this.drawn = false;
