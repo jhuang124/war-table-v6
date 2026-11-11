@@ -3811,6 +3811,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       if (reduced) cutTo({ ...rig.home });
       else void rig.goHome();
     },
+    setTitleMode(on: boolean) {
+      continents.setLabelsHidden(on);
+    },
     setAttractMode(on: boolean) {
       // Title / victory: the flat painting, no table, no orbit (docs/INK.md B §7); the calm keeps drifting.
       if (on && !rig.userMoved) {
@@ -3925,6 +3928,31 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       // Fresh each call (not last frame's value), in client px.
       return overlay.project(t, camera, container.getBoundingClientRect());
     },
+    // [v6 integration] the territory's main land on screen (its bbox's corners projected), client px; null off-screen
+    getScreenRect(t: TerritoryId) {
+      const tg = G.territories[t];
+      if (!tg) return null;
+      // the main landmass (specks and far islands would stretch the box)
+      const ring = tg.polygons[0]?.outer;
+      let [x0, y0, x1, y1] = tg.bbox;
+      if (ring?.length) {
+        x0 = Math.min(...ring.map((p) => p[0]));
+        x1 = Math.max(...ring.map((p) => p[0]));
+        y0 = Math.min(...ring.map((p) => p[1]));
+        y1 = Math.max(...ring.map((p) => p[1]));
+      }
+      const cr = container.getBoundingClientRect();
+      let l = Infinity, r = -Infinity, top = Infinity, b = -Infinity;
+      for (const [bx, by] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]] as const) {
+        const v = toWorld(bx, by, TILE_TOP).project(camera);
+        if (v.z >= 1) return null;
+        const px = (v.x * 0.5 + 0.5) * cr.width + cr.left;
+        const py = (-v.y * 0.5 + 0.5) * cr.height + cr.top;
+        l = Math.min(l, px); r = Math.max(r, px); top = Math.min(top, py); b = Math.max(b, py);
+      }
+      if (r < cr.left || l > cr.right || b < cr.top || top > cr.bottom) return null;
+      return { x: Math.round(l), y: Math.round(top), w: Math.round(r - l), h: Math.round(b - top) };
+    },
     onTerritoryLongPress(cb: (info: TerritoryPointerInfo | null) => void) {
       longCbs.push(cb);
     },
@@ -3991,7 +4019,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // Every call from the controller may change what the board shows: draw the next frames.
   for (const k of Object.keys(view) as (keyof BoardView)[]) {
     const f = view[k];
-    if (typeof f !== 'function' || k === 'getStats' || k === 'getScreenPosition' || k === 'isViewDisplaced') continue;
+    if (typeof f !== 'function' || k === 'getStats' || k === 'getScreenPosition' || k === 'getScreenRect' || k === 'isViewDisplaced') continue;
     (view as unknown as Record<string, unknown>)[k] = function (this: unknown, ...args: unknown[]) {
       invalidate();
       return (f as (...a: unknown[]) => unknown).apply(this, args);

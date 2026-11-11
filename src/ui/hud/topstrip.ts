@@ -420,6 +420,9 @@ export class TopStrip {
   private seats: HTMLDivElement;
   private chips: Chip[] = [];
   private reset: HTMLButtonElement;
+  /** v6: the portrait overview's word ('Whole map' / 'Close up'). */
+  private view: HTMLButtonElement;
+  private overviewKey = '';
   private menuMark: SVGSVGElement;
   private vm: SeatChipVM[] | null = null;
   private moved = false;
@@ -446,6 +449,11 @@ export class TopStrip {
     this.reset.type = 'button';
     this.reset.dataset.testid = 'reset-view';
     this.reset.addEventListener('click', () => send({ type: 'resetView' }));
+    // v6 (mobile finding 3): portrait phones' whole-world view, a quiet word in the same hand as `Reset view`.
+    this.view = h('button', 'ts-reset ts-view nofocus hidden', 'Whole map');
+    this.view.type = 'button';
+    this.view.dataset.testid = 'overview';
+    this.view.addEventListener('click', () => send({ type: 'overview' }));
     const menu = h('button', 'ts-menu nofocus');
     menu.type = 'button';
     menu.dataset.testid = 'menu';
@@ -457,7 +465,7 @@ export class TopStrip {
     rows.forEach(([x0, y, x1], i) => this.menuMark.append(svg('path', { d: brushMark([[x0, y + 0.25], [(x0 + x1) / 2, y - 0.2], [x1, y + 0.1]], { seed: 401 + i * 13, width: 1.9 }), fill: 'currentColor' })));
     menu.append(this.menuMark);
     menu.addEventListener('click', () => send({ type: 'overlay', overlay: 'pause' }));
-    right.append(this.reset, menu);
+    right.append(this.view, this.reset, menu);
     this.el.append(this.seats, right);
     this.card.onAsk = (seat) => this.onAskNow?.(seat);
     this.ties = svg('svg', { class: 'ts-ties', 'aria-hidden': 'true' });
@@ -562,6 +570,23 @@ export class TopStrip {
       if (!relayout && !was.includes(`${a}-${b}:`) && !motion.reduced && typeof path.animate === 'function')
         path.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, easing: 'cubic-bezier(0.2, 0.9, 0.2, 1)' });
     }
+  }
+
+  /**
+   * v6: the overview word, on portrait phones only (null = the board has none). Off: 'Whole map'; on: 'Close up'
+   * (back to the current player's front).
+   */
+  setOverview(on: boolean | null | undefined, phonePortrait: boolean): void {
+    const show = phonePortrait && typeof on === 'boolean';
+    const key = show ? (on ? 'on' : 'off') : '';
+    if (key === this.overviewKey) return;
+    const was = this.overviewKey;
+    this.overviewKey = key;
+    toggle(this.view, 'hidden', !show);
+    if (!show) return;
+    setText(this.view, on ? 'Close up' : 'Whole map');
+    this.view.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (!was) drawIn(this.view, 200);
   }
 
   /** `Reset view` beside the ensō, only while the camera is off home. */

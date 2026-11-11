@@ -8,8 +8,9 @@ import { sheetDrop } from '../sheet';
 const KEYS: [string, string][] = [
   ['Enter  or  Space', 'Press the gold word: place, roll, move, go on'],
   ['←  →   or   −  +', 'Change the count'],
-  ['U', 'Undo the last placement'],
-  ['Esc', 'Cancel what is picked, then the menu'],
+  ['1 – 9', 'Type the count'],
+  ['U', 'Undo the last placement, until you roll'],
+  ['Esc', 'Cancel what is picked; with nothing picked, the menu'],
   ['?', 'These keys'],
 ];
 

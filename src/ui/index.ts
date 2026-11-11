@@ -468,6 +468,7 @@ export const mountUi: MountUi = (host, api) => {
       }
       top.update(g.seats);
       top.setViewMoved(g.viewMoved);
+      top.setOverview(g.overview, layout.form === 'phone' && layout.portrait);
       // A breath line arriving in this very render (a turn start): the strip's line keeps its words
       // while it dries, rather than swapping to the new turn's line and drying that (INK F6).
       if (g.banner && g.banner.id !== prev?.game?.banner?.id && sayInSlot()) strip.setLineAside(true);

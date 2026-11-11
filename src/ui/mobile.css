@@ -113,6 +113,8 @@
 .form-phone .ts-menu { width: 2.75rem; height: 2.75rem; }
 .form-phone .ts-reset { height: 2.75rem; padding: 0 0.6rem; font-size: 0.875rem; }
 .form-phone.portrait .ts-reset { position: absolute; top: calc(100% + 8px); right: 0; }
+/* v6: the overview word sits under the menu; `Reset view` under it when both show */
+.form-phone.portrait .ts-view:not(.hidden) ~ .ts-reset { top: calc(100% + 8px + 2.75rem); }
 .form-phone .hud::before { height: 4.5rem; }
 
 /* ---- The dock ---- */

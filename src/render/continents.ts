@@ -138,6 +138,11 @@ export class Continents {
     s.w = c.amount;
   }
 
+  /** v6 integration: the title screen hides the printed names and bonuses (they read through the wordmark). */
+  setLabelsHidden(on: boolean): void {
+    for (const c of this.conts.values()) c.label.visible = !on;
+  }
+
   /** Seat colours changed (new game): force the next refresh to recolour. */
   invalidate(): void {
     for (const c of this.conts.values()) c.holder = -2;

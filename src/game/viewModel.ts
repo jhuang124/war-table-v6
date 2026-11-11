@@ -536,6 +536,12 @@ export interface GameVM {
    * line for a second ('3 territories · Asia +4'). null / absent = none.
    */
   holding?: { seat: SeatRef; armies: number; breakdown: string } | null;
+  /**
+   * Additive (v6 integration, mobile finding 3): the portrait phone's whole-world view is on (true) or off (false);
+   * the HUD shows a quiet word that toggles it ('overview' intent) on portrait phones only. null / absent = the
+   * board has no overview.
+   */
+  overview?: boolean | null;
 }
 
 /** v5: the end-of-game time-lapse. */
@@ -677,6 +683,8 @@ export type UiIntent =
   | { type: 'track'; seg: TrackSegId }
   /** The `Reset view` pill: back to the home framing. */
   | { type: 'resetView' }
+  /** v6: toggle the portrait phone's whole-world view (BoardView.setOverview). */
+  | { type: 'overview' }
   | { type: 'setCount'; value: number }
   | { type: 'cardsPanel'; open: boolean }
   | { type: 'handoffAccept' }

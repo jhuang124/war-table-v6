@@ -331,6 +331,16 @@ export interface BoardView {
    */
   duckAudio?(ms?: number): void;
   /**
+   * Additive (v6 integration, ux-desktop 6): the territory's main landmass on screen as a client-px box (its corners
+   * projected), so the hover note can sit beside it; null when off-screen. Never animates anything.
+   */
+  getScreenRect?(t: TerritoryId): { x: number; y: number; w: number; h: number } | null;
+  /**
+   * Additive (v6 integration, INTEGRATION A2.8): the title screen is up. The board keeps its painting but hides the
+   * printed continent names and bonuses ('Africa', 'Asia · +7') that would show through behind the wordmark.
+   */
+  setTitleMode?(on: boolean): void;
+  /**
    * Screen position (client px) of a territory's army piece — the top centre of its base, which is always
    * on the territory's own tile (click it to select) — or null if off-screen.
    */
