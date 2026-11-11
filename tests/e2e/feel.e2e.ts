@@ -120,8 +120,11 @@ for (const vp of [
   check(g.onRing.length === 0, `${tag}: no HUD word on the ring (${g.onRing.join(' | ') || 'none'})`, results);
   check(!!g.bar && g.tray.bottom <= g.bar.top + tol, `${tag}: the tray clears the bottom strip (${Math.round(g.tray.bottom)} ≤ ${Math.round(g.bar!.top)})`, results);
   // Bottom chrome = the rule and the pill row under it (the moodboard's is ~14% of the height); TV text is larger.
-  const bottomMax = vp.text === 'tv' ? 0.16 : 0.14;
-  const topMax = vp.text === 'tv' ? 0.085 : 0.075;
+  // v6: the HUD grows with the screen (uiScale: 1440×900 → 1.06, 1920×1080 → 1.25, TV 1.73) and the seat rings carry
+  // their counts and a quiet line, so the top strip is 8–9 % of the height (measured 72 / 76 / 90 px; TV 124 px),
+  // the TV rule 16.2 %. Still two thin strips: the bands move up by the v6 scale, no further.
+  const bottomMax = vp.text === 'tv' ? 0.165 : 0.14;
+  const topMax = vp.text === 'tv' ? 0.12 : 0.092;
   check(!!g.top && g.top.bottom <= topMax * g.H && !!g.rule && g.H - g.rule.top <= bottomMax * g.H, `${tag}: chrome is two thin strips (top ${Math.round(g.top!.bottom)} px, bottom from the rule ${Math.round(g.H - (g.rule?.top ?? 0))} px ≤ ${Math.round(bottomMax * g.H)})`, results);
   check(g.tray.left >= -tol && g.tray.right <= vp.width + tol, `${tag}: the tray stays inside the frame (${Math.round(g.tray.left)}–${Math.round(g.tray.right)})`, results);
   // The ink tray is slim and quiet (INK F2: ~0.7× the old lacquer dice); still legible across a room.

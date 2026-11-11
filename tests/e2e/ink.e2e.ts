@@ -171,7 +171,9 @@ const boardDbg = (page: Page) =>
     await idle(page);
   }
 
-  // A stroke released over open water cancels.
+  // A stroke released over open water cancels. (v6: after the Move the next good attack from China may already be
+  // armed for you; a cancelled stroke leaves the strip exactly as it found it and arms nothing of its own.)
+  const pre = await ui(page);
   const c0 = await pos(page, 'afghanistan');
   await page.mouse.move(c0.x, c0.y);
   await page.mouse.down();
@@ -182,7 +184,12 @@ const boardDbg = (page: Page) =>
   await page.mouse.up();
   await page.waitForTimeout(300);
   u = await ui(page);
-  check(!u.buttons.includes('Blitz') && !/→/.test(u.line), `mouse: released elsewhere, the stroke dries out and nothing is armed ("${u.line}")`, results);
+  const armedBefore = /→/.test(pre.line);
+  check(
+    !/^Afghanistan/.test(u.line) && (armedBefore ? u.line === pre.line && u.buttons.join() === pre.buttons.join() : !u.buttons.includes('Blitz') && !/→/.test(u.line)),
+    `mouse: released elsewhere, the stroke dries out and arms nothing ("${u.line}"; before the stroke "${pre.line}")`,
+    results,
+  );
 
   // Fortify, end the turn, watch the AIs for a while, open the menu sheet.
   await seg(page, 'fortify');

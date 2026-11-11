@@ -8,7 +8,7 @@
 // Also checks the §10 feel budgets from __risk.metrics(): roll/blitz/brief timings, AI turn median and
 // p95, forced wait 0, camera never moves during human input and stays ≤ 45°/s, idle board 0 tweens.
 import { ART, check, clearStorage, clickBtn, clickT, finish, idle, open, place, rendered, seg, state, ui } from './lib';
-import { attackTargets, fortifyTargets, TERRITORY_IDS, type GameState, type TerritoryId } from '../../src/engine';
+import { attackTargets, fortifyTargets, territoryName, TERRITORY_IDS, type GameState, type TerritoryId } from '../../src/engine';
 
 const results: string[] = [];
 const { browser, page, errors } = await open();
@@ -81,7 +81,9 @@ const f = front(s!)!;
 const toPlace = (s!.phase as { remaining: number }).remaining;
 const before = s!.territories[f.from].armies;
 let u = await ui(page);
-check(u.step === 'Place' && new RegExp(`^Place ${toPlace} arm(y|ies) · click a territory$`).test(u.line), `[${u.step}] ${u.line}`, results);
+// v6: a person's first turn of the game names their colour ("John · you're Vermilion · place 3 armies")
+const placeLine = s!.round === 1 ? `^John · you're Vermilion · place ${toPlace} arm(y|ies)$` : `^Place ${toPlace} arm(y|ies) · click a territory$`;
+check(u.step === 'Place' && new RegExp(placeLine).test(u.line), `[${u.step}] ${u.line}`, results);
 await place(page, f.from, 2);
 let st = (await state(page))!;
 check(st.territories[f.from].armies === before + 2, `pick, stepper 2, Place 2 → ${f.from} ${st.territories[f.from].armies} (was ${before})`, results);
@@ -143,8 +145,9 @@ if (st.phase.kind === 'occupy') {
   u = await ui(page);
   check(st.phase.kind === 'attack' && st.territories[f.to].armies >= 1, `Move confirmed the occupy (${f.to} ${st.territories[f.to].armies})`, results);
   if (next && st.territories[f.to].armies >= 2) {
-    // The conquered tile is the source now: one click on the next enemy arms it.
-    check(/^Attack from /.test(u.line), `chained: ${u.line}`, results);
+    // The conquered tile is the source now (v6: with its next good attack armed when there is one): one click on
+    // the next enemy arms it.
+    check((u.line.startsWith('Attack from ') || u.line.startsWith(`${territoryName(f.to)} → `)), `chained: ${u.line}`, results);
     await clickT(page, next);
     u = await ui(page);
     if (u.primary === 'Blitz') {

@@ -60,8 +60,13 @@ const reinforce = (remaining: number): Phase => ({ kind: 'reinforce', remaining,
   u = await ui(page);
   check(u.line === 'Attack from Siberia · click an enemy' || /^Siberia → \w+/.test(u.line), `after Move, Siberia is the source (or its next attack armed): ${u.line}`, results);
   /** Arm `from → to` unless it is already armed; returns the clicks it took (0 or 1). */
+  // (an attack armed for you ignores a Roll / Blitz in its first 250 ms, so a double click on Move never rolls it:
+  // a deliberate press comes after that beat)
   const arm = async (from: string, to: string): Promise<number> => {
-    if (new RegExp(`^${from} → ${to} · `).test((await ui(page)).line)) return 0;
+    if (new RegExp(`^${from} → ${to} · `).test((await ui(page)).line)) {
+      await page.waitForTimeout(300);
+      return 0;
+    }
     await clickT(page, to.toLowerCase());
     return 1;
   };
