@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent, GameState, TerritoryId } from '../../src/engine';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardView, PlayEventOptions, TerritoryPointerInfo } from '../../src/render/BoardView';
-import { createController } from '../../src/game/controller';
+import { createController, occupyGuess } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY } from '../../src/game/storage';
 import { eventDurationMs, scaledDuration } from '../../src/game/timingModel';
 import { board as fixture } from './fixtures';
@@ -106,7 +106,7 @@ describe('R1-02 / ROUND2 §B occupy: board clicks never confirm; Move N does, th
 
   it('a board click during occupy is refused with the reason; the state does not move', async () => {
     const { c, fb } = await resume(occupyBoard());
-    expect(c.getViewModel().game!.strip.count!.value).toBe(9); // the smart default is max here
+    expect(c.getViewModel().game!.strip.count!.value).toBe(occupyGuess(occupyBoard())); // v6: the AI's own count
     for (const t of ['iceland', 'greenland', 'ontario', 'alberta'] as const) {
       fb.click(t);
       await vi.advanceTimersByTimeAsync(20);
@@ -129,11 +129,11 @@ describe('R1-02 / ROUND2 §B occupy: board clicks never confirm; Move N does, th
     c.dispose();
   });
 
-  it('Move 9 moves the default count in', async () => {
+  it('Move N moves the default count in (v6: the AI\'s own count)', async () => {
     const { c } = await resume(occupyBoard());
     c.intent({ type: 'button', id: 'move' });
     await until(() => c.hooks.isIdle(), 4000);
-    expect(c.hooks.getState()!.territories.ontario.armies).toBe(9);
+    expect(c.hooks.getState()!.territories.ontario.armies).toBe(occupyGuess(occupyBoard()));
     c.dispose();
   });
 });
@@ -229,11 +229,13 @@ describe('ROUND2 §A Enter is the one brass thing', () => {
   it('occupy: Enter moves; attack with targets left: nothing brass, Enter does nothing; Fortify: Enter ends the turn', async () => {
     const s = fixture({ greenland: [0, 10], ontario: [0, 0] }, { kind: 'occupy', from: 'greenland', to: 'ontario', min: 3, max: 9, previousOwner: 2 });
     const { c } = await resume(s);
-    expect(c.hooks.ui().brass).toEqual(['Move 9']);
+    expect(c.hooks.ui().brass).toEqual([`Move ${occupyGuess(s)}`]);
     c.handleKey('Enter');
     await until(() => c.hooks.isIdle(), 4000);
     expect(c.hooks.getState()!.phase.kind).toBe('attack');
-    // Nothing to commit: the one gold falls back to the current segment (INK B2.1), which Enter never presses.
+    // v6: the next good attack from Ontario is armed for the player (Blitz is the gold word; it never rolls by
+    // itself). Esc puts the target away; with nothing to commit the one gold falls back to the current segment.
+    if (c.hooks.ui().brass[0] === 'Blitz') c.handleKey('Escape');
     expect(c.hooks.ui().brass).toEqual(['Attack']);
     expect(c.hooks.ui().recommended).toBeNull();
     c.handleKey('Escape'); // clear the chained source

@@ -266,6 +266,15 @@ export interface StripInput {
    * line says how many ('You took Brazil · 3 armies move in'). null = a count was (or will be) chosen.
    */
   tookMoved?: number | null;
+  /**
+   * v6 (ux-desktop 8): the Place step closed but its last placement can still be taken back (nothing rolled yet):
+   * Attack (and the quiet opening's Fortify) keeps a quiet Undo while nothing is picked.
+   */
+  canUndo?: boolean;
+  /** v6 (fight copy): what the last roll of the armed fight cost, said in the line ('Lost 1 · 6 left'). */
+  rollResult?: string | null;
+  /** v6 (finding 13): the occupy line names what stays behind ('Ural keeps 4'). Absent = the bare 'Move into'. */
+  occupyKeeps?: boolean;
 }
 
 const btn = (id: ButtonId, label: string, primary = false): ButtonVM => ({ id, label, primary });
@@ -322,6 +331,36 @@ export function attackOdds(s: GameState, from: TerritoryId, to: TerritoryId, sho
 /** 'You took Brazil', and when the engine moved the armies in itself, '· 3 armies move in'. */
 export function tookLine(t: TerritoryId, moved: number | null): string {
   return moved ? `You took ${tName(t)}${SEP}${movesIn(moved)}` : `You took ${tName(t)}`;
+}
+
+/**
+ * v6 (ux-desktop 7): what one roll did, from the attacker's side: 'Lost 1', 'They lost 2', 'Lost 1, they lost 1'.
+ * null when nothing was lost (never happens in a legal roll).
+ */
+export function rollWords(attackerLost: number, defenderLost: number): string | null {
+  if (attackerLost > 0 && defenderLost > 0) return `Lost ${attackerLost}, they lost ${defenderLost}`;
+  if (attackerLost > 0) return `Lost ${attackerLost}`;
+  if (defenderLost > 0) return `They lost ${defenderLost}`;
+  return null;
+}
+
+/**
+ * v6: the armed line after a roll that didn't decide it: 'Lost 1 · 6 left · 61% · likely'. The result leads; the
+ * odds follow while they fit in the line's 60 characters (the word goes first, then the number).
+ */
+export function afterRollLine(result: string, s: GameState, from: TerritoryId, to: TerritoryId, showWinChance: boolean): string {
+  const a = s.territories[from].armies;
+  const d = s.territories[to].armies;
+  const head = `${result}${SEP}${a} left`;
+  if (a < 2 || d < 1) return head;
+  const p = winProbability(a, d);
+  const tries = showWinChance ? [`${head}${SEP}${pct(p)}%${SEP}${oddsWord(p)}`, `${head}${SEP}${pct(p)}%`] : [`${head}${SEP}${oddsWord(p)}`];
+  return tries.find((x) => x.length <= ATTACK_LINE_MAX) ?? head;
+}
+
+/** v6: a capture's words: 'Egypt captured · cost 27' (the cost only when there was one). */
+export function capturedWords(to: TerritoryId, cost: number): string {
+  return cost > 0 ? `${tName(to)} captured${SEP}cost ${cost}` : `${tName(to)} captured`;
 }
 
 /** 'Ural 1 · Siberia 15': the two totals after moving `n` (the board-less preview). */
@@ -432,18 +471,26 @@ export function buildStrip(inp: StripInput): StripVM {
       if (inp.took && s.territories[inp.took].owner === me) return make('attack', tookLine(inp.took, inp.tookMoved ?? null));
       const armed = sel.selected && sel.target && s.territories[sel.selected].owner === me && s.territories[sel.target].owner !== me;
       if (armed) {
-        return make('attack', attackLine(s, sel.selected!, sel.target!, inp.showWinChance), {
+        const al = attackLine(s, sel.selected!, sel.target!, inp.showWinChance);
+        return make('attack', inp.rollResult ? afterRollLine(inp.rollResult, s, sel.selected!, sel.target!, inp.showWinChance) : al, {
           buttons: [btn('roll', 'Roll'), btn('blitz', 'Blitz', true)],
         });
       }
-      if (attacksLocked(s)) return make('attack', QUIET_LINE);
-      if (sel.selected && s.territories[sel.selected].owner === me) return make('attack', `Attack from ${tName(sel.selected)}${SEP}${click()} an enemy`);
-      if (attackSources(s, me).length === 0) return make('attack', `No attacks left${SEP}end your turn`);
-      return make('attack', `${Click()} an enemy territory to attack`);
+      const undoA = inp.canUndo ? { buttons: [btn('undo', 'Undo')] } : {};
+      if (attacksLocked(s)) return make('attack', QUIET_LINE, undoA);
+      if (sel.selected && s.territories[sel.selected].owner === me) return make('attack', `Attack from ${tName(sel.selected)}${SEP}${click()} an enemy`, undoA);
+      if (attackSources(s, me).length === 0) return make('attack', `No attacks left${SEP}end your turn`, undoA);
+      return make('attack', `${Click()} an enemy territory to attack`, undoA);
     }
     case 'occupy': {
       const value = Math.min(ph.max, Math.max(ph.min, sel.occupyCount ?? ph.max));
-      const line = sel.countTouched && !inp.boardPreview ? totalsLine(s, ph.from, ph.to, value) : `Move into ${tName(ph.to)}`;
+      const keeps = s.territories[ph.from].armies - value;
+      const line =
+        sel.countTouched && !inp.boardPreview
+          ? totalsLine(s, ph.from, ph.to, value)
+          : inp.occupyKeeps
+            ? `Move into ${tName(ph.to)}${SEP}${tName(ph.from)} keeps ${keeps}`
+            : `Move into ${tName(ph.to)}`;
       // v5.1 E2: all but one is decided for you; the control unfolds only once the player touches the count.
       return make('occupy', line, {
         count: ph.max > ph.min ? { ...countVM(value, ph.min, ph.max), ...(sel.countTouched ? {} : { collapsed: true }) } : null,
@@ -461,8 +508,9 @@ export function buildStrip(inp: StripInput): StripVM {
         });
       }
       if (sel.selected && s.territories[sel.selected].owner === me) return make('fortify', `Move from ${tName(sel.selected)}${SEP}${click()} where to`);
-      if (!canFortifyAny(s)) return make('fortify', `Nothing to move${SEP}end your turn`);
-      return make('fortify', 'Move armies once, or end your turn');
+      const undoF = inp.canUndo ? { buttons: [btn('undo', 'Undo')] } : {};
+      if (!canFortifyAny(s)) return make('fortify', `Nothing to move${SEP}end your turn`, undoF);
+      return make('fortify', 'Move armies once, or end your turn', undoF);
     }
     case 'game-over':
       return {

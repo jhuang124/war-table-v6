@@ -59,7 +59,7 @@ import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { attackLine, attackOdds, attackSources, youreLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
+import { attackLine, attackOdds, attackSources, capturedWords, rollWords, youreLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
 import {
   buildReplay,
   emptyStory,
@@ -363,6 +363,9 @@ interface Engagement {
   startD: number;
   rolls: number;
   attLost: number;
+  /** v6 fight copy: the last roll's losses (attacker, defender), for 'Lost 1 · 6 left'. */
+  lastA?: number;
+  lastD?: number;
   defLost: number;
   blitz: boolean;
   winP: number;
@@ -452,6 +455,10 @@ const defaultClock = (): Clock => ({
 const THINK_TURN_START = 240; // v6: trimmed with FIRST_BEAT to keep the AI-turn median under 6 s (Pillar 5)
 /** The breath before each AI engagement (× the turn's compression): the room reads one line, then the next. */
 const AI_GAP_MS = 160;
+/** v6 (feel.md row 23): the AI's source glints this long before its stroke (inside the gap above). */
+const GLINT_LEAD_MS = 150;
+/** v6 (feel.md row 23): one AI seat hands to the next with a breath (replaces the turn-start think, not added to it). */
+const AI_SEAT_BREATH_MS = 340;
 /** An AI's placements land within this (tier-0 swells, staggered). */
 const AI_PLACE_MS = 520;
 /** Beats in an AI turn before every beat is shortened proportionally (Pillar 5: a round stays in budget). */
@@ -628,6 +635,54 @@ function peaceAskBlockOf(s: GameState, human: PlayerId, ai: PlayerId): string | 
   }
 }
 
+/**
+ * v6 (design.md 6): the move-in default after a capture is the count the AI would move (a normal AI, no
+ * personality: it keeps a border garrison where the old territory still faces enemies and pushes forward where the
+ * new one does). Read from the AI on a copy of the state; never the engine's rng. Falls back to all but one.
+ */
+export function occupyGuess(s: GameState): number {
+  const ph = s.phase;
+  if (ph.kind !== 'occupy') return 0;
+  try {
+    const me = s.currentPlayer;
+    const probe: GameState = { ...s, players: s.players.map((p, i) => (i === me ? { ...p, difficulty: 'normal' as const, personality: undefined } : p)) };
+    const a = chooseAiAction(probe, me);
+    if (a.type === 'occupy') return Math.min(ph.max, Math.max(ph.min, a.count));
+  } catch {
+    /* the guess is a courtesy: all but one */
+  }
+  return ph.max;
+}
+
+/**
+ * v6 (design.md 6 "blitz chains"): after a conquest, the next good attack from the territory just taken, to arm (never
+ * to roll): the likeliest win at 80 % or better against a seat you are not at peace with. null = arm nothing.
+ */
+export function nextAttackFrom(s: GameState, t: TerritoryId): TerritoryId | null {
+  if (s.phase.kind !== 'attack' || attacksLocked(s)) return null;
+  const me = s.territories[t]?.owner;
+  if (me === undefined || me !== s.currentPlayer || s.territories[t].armies < 2) return null;
+  let best: TerritoryId | null = null;
+  let bestP = 0.8 - 1e-9;
+  for (const to of attackTargets(s, t)) {
+    const them = s.territories[to].owner;
+    if (them >= 0 && trucePartners(s, me).includes(them)) continue;
+    const p = winProbability(s.territories[t].armies, s.territories[to].armies);
+    if (p > bestP || (p === bestP && best && s.territories[to].armies < s.territories[best].armies)) {
+      best = to;
+      bestP = p;
+    }
+  }
+  return best;
+}
+
+/** v6: an Esc this soon after one that cancelled something never opens the menu. */
+const ESC_MASH_MS = 600;
+/** v6: two digit keys this close together type one number (1, 2 → 12). */
+const DIGIT_MS = 900;
+/** v6: an attack armed after a conquest can't be rolled by a press this soon after it was armed. */
+const AUTO_ARM_GUARD_MS = 450;
+
 /** v5.1 E1: Place → Attack advances by itself this long after the last army is placed. */
 const AUTO_ATTACK_MS = 250;
 /** v5.1 C: a standing reason holds the line this long on a long-press / tap (hover holds until it leaves). */
@@ -761,6 +816,24 @@ class Controller {
   /** Armies an AI has placed so far this turn / setup turn (the narration counts them up). */
   private narrPlaced = 0;
   private aiScheduled = false;
+  /** v6: the portrait phone's whole-world view is on (BoardView.onOverviewChange). Kept across games, like the camera. */
+  private overviewOn = false;
+  /** v6: this AI turn follows another AI's (the breath between seats). */
+  private aiAfterAi = false;
+  /**
+   * v6 (ux-desktop 8): Undo outlives the last army. The state as the Place step ended (every army placed, nothing
+   * rolled), kept until anything but a phase step is applied; Undo in Attack (or the quiet opening's Fortify)
+   * goes back to it and takes the last placement off.
+   */
+  private undoBase: { state: GameState; turn: number; placements: Placement[] } | null = null;
+  /** v6 (design 6): the attack armed for the player after a conquest (never rolled for them). */
+  private autoArmed: { from: TerritoryId; to: TerritoryId; turn: number; at: number; shown: boolean } | null = null;
+  /** v6: the continent bowl already sounded at the conquest that completed it. */
+  private bowl: { player: PlayerId; continent: string; turn: number } | null = null;
+  /** v6 (ux-desktop 10): when Esc last cancelled something (a mashed Esc never falls through to the menu). */
+  private escCancelAt = -Infinity;
+  /** v6: the count being typed with digit keys, and when the last digit came. */
+  private digits: { v: number; at: number } | null = null;
   /** A human seat has started a main turn this game (ends the short "opening" AI turns). */
   private humanHasPlayed = false;
   /** The begun line of the AI engagement playing now ('Sage attacks Ural…'), completed by its verdict. */
@@ -888,6 +961,12 @@ class Controller {
     // Draw-to-attack (docs/INK.md A2): a finished stroke arms exactly like a target-first tap.
     this.board.onStroke?.((st) => this.onStroke(st));
     // The `Reset view` pill follows the board's own notion of "off home" when it has one.
+    // v6: the portrait overview turned on or off (the HUD's word, or a double-tap on open water).
+    this.board.onOverviewChange?.((on) => {
+      if (on === this.overviewOn) return;
+      this.overviewOn = on;
+      this.invalidate();
+    });
     this.board.onViewDisplacedChange?.((moved) => {
       if (moved === this.viewMoved) return;
       this.viewMoved = moved && this.screen === 'game';
@@ -1021,6 +1100,7 @@ class Controller {
       this.vm = reconcile(this.vm, this.buildVM());
       this.dirty = false;
       this.pushHighlights();
+      this.pushTitleMode();
     }
     // getViewModel() may have rebuilt already this frame; subscribers still hear about it once.
     if (this.vm === this.lastNotified) return;
@@ -1034,11 +1114,25 @@ class Controller {
     }
   }
 
+  /** v6: the board hides its printed continent names while the title screen is up (they show through the wordmark). */
+  private titleMode: boolean | null = null;
+  private pushTitleMode(): void {
+    const on = this.screen === 'title';
+    if (on === this.titleMode) return;
+    this.titleMode = on;
+    try {
+      this.board.setTitleMode?.(on);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   getViewModel(): ViewModel {
     if (this.dirty) {
       this.vm = reconcile(this.vm, this.buildVM());
       this.dirty = false;
       this.pushHighlights();
+      this.pushTitleMode();
     }
     return this.vm;
   }
@@ -1203,6 +1297,12 @@ class Controller {
     this.epoch++;
     this.capitalsKey = '';
     this.humanHasPlayed = false;
+    this.aiAfterAi = false;
+    this.undoBase = null;
+    this.autoArmed = null;
+    this.bowl = null;
+    this.escCancelAt = -Infinity;
+    this.digits = null;
     this.queue = [];
     this.skipAll = false;
     this.skipBeat = null;
@@ -1303,7 +1403,7 @@ class Controller {
     this.sel = this.meta.sel;
     this.validateSel();
     if (s.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-      this.sel.occupyCount = s.phase.max;
+      this.sel.occupyCount = occupyGuess(s);
     }
     this.board.skipAnimations();
     this.board.setAttractMode(false);
@@ -1448,6 +1548,9 @@ class Controller {
       return r;
     }
     if (!this.frozenSel && r.events.some(isBlocking)) this.frozenSel = { ...before, staged: { ...before.staged } };
+    // v6: Undo past the Place step lasts until anything but a step along the track is applied (a roll, a move,
+    // a peace ask, the end of the turn).
+    if (action.type !== 'endReinforce' && action.type !== 'endAttack') this.undoBase = null;
     if (this.meta) this.meta.firstMoved = true;
     this.autoMoved = null;
     this.enqueue(
@@ -1523,7 +1626,8 @@ class Controller {
         if (epoch !== this.epoch || !this.disp) continue;
         const skip = this.isSkipping(e);
         const blocking = isBlocking(e.ev);
-        const earlyDisplay = !blocking || e.ev.type === 'turnStarted';
+        // v6: a knockout's seat dries with the sweep, not after it.
+        const earlyDisplay = !blocking || e.ev.type === 'turnStarted' || e.ev.type === 'playerEliminated';
         if (!skip && this.boardStale && this.disp) {
           this.boardStale = false;
           this.board.syncState(this.disp);
@@ -1627,6 +1731,12 @@ class Controller {
     this.skipBeat = null;
     this.frozenSel = null;
     this.applyBoardSpeed();
+    // v6: the armed-for-you fight is on screen from now: its guard counts from here (a press that skipped the
+    // conquest never rolls it).
+    if (this.autoArmed && !this.autoArmed.shown) {
+      this.autoArmed.shown = true;
+      this.autoArmed.at = this.now();
+    }
     const pending = this.pendingInputs;
     this.pendingInputs = [];
     const now = this.now();
@@ -1715,6 +1825,7 @@ class Controller {
         if (human && prevKind === 'human') this.guardUntil = this.now() + 250;
         // v4 A4: the seat whose turn just ended has seen its rings through that turn: they go.
         if (this.meta?.rings && d.turn > 0 && this.meta.rings[d.currentPlayer]) delete this.meta.rings[d.currentPlayer];
+        this.aiAfterAi = aiTurn && prevKind === 'ai';
         if (this.meta) this.meta.lastTurnKind = aiTurn ? 'ai' : 'human';
         this.openTurnMetric(ev.player);
         this.sel = emptySel();
@@ -1783,9 +1894,10 @@ class Controller {
           } catch {
             /* audio is best-effort */
           }
-          this.cue('cupSet');
+          // v6 (feel.md row 22): a person's turn is ONE cue, the turnStart below; the wood set-down is for AI turns.
+          if (!human) this.cue('cupSet');
           // §7.9: a new round re-inks the round numeral, with a paper tick.
-          if (ev.round > d.round && d.round > 0) this.cue('tick', { delay: 0.45 });
+          if (!human && ev.round > d.round && d.round > 0) this.cue('tick', { delay: 0.45 });
         }
         if (human) this.play('turnStart', { variant: prevKind === 'ai' ? 'bright' : undefined });
         // Boards that implement setAutoCamera return home themselves on turnStarted.
@@ -1832,6 +1944,16 @@ class Controller {
         this.lastConquest = { attacker: ev.player, victim: ev.previousOwner };
         if (ev.previousOwner >= 0) this.lostKeys[ev.previousOwner] = (this.lostKeys[ev.previousOwner] ?? 0) + 1;
         if (e.ai) this.narration = attackTakes(this.narrBegun ?? attackBegins(pName(d, ev.player), tName(ev.to)));
+        // v6 (feel.md): a conquest that completes a continent sounds its bowl now, with the board's sweep from this
+        // territory; continentGained (after the move-in) then only writes the words.
+        {
+          const m = mapDefOf(d.config);
+          const c = m.territories[ev.to]?.continent;
+          if (c && m.continents[c].territories.every((t) => t === ev.to || d.territories[t]?.owner === ev.player)) {
+            this.bowl = { player: ev.player, continent: c, turn: d.turn };
+            if (!skip) this.play('continent', this.isHumanSeat(ev.player) ? {} : { distance: 0.6 });
+          }
+        }
         // v6 capitals: named only when its own seat loses it, or takes it back (they change hands too often else).
         if (ev.capitalOf !== undefined && ev.capitalOf >= 0 && d.players[ev.capitalOf] && !this.autoplayOn) {
           const text = capitalLine(d, ev.capitalOf, ev.player, ev.previousOwner, ev.to);
@@ -1860,14 +1982,17 @@ class Controller {
         // Human involvement only: a human took it, or took it from a human. AI-vs-AI just flares.
         const lc = this.lastConquest;
         const involved = this.isHumanSeat(ev.player) || (!!lc && lc.attacker === ev.player && this.isHumanSeat(lc.victim));
+        // v6: the bowl already sounded at the conquest that completed it (with the sweep).
+        const rung = !!this.bowl && this.bowl.player === ev.player && this.bowl.continent === c && this.bowl.turn === d.turn;
+        this.bowl = null;
         if (involved) {
           // v5 E7: a human's continent says what it's worth to them: 'John holds Asia · +7 next turn'.
           const worth = this.isHumanSeat(ev.player) ? `+${bonus} next turn` : `+${bonus}`;
-          this.announce('continent', `${upper(name)} HOLDS ${upper(cName(c))}${SEP}+${bonus}`, ev.player, {
+          this.announce('continent', `${upper(name)} HOLDS ${upper(cName(c))}${SEP}+${bonus}`, ev.player, rung ? undefined : {
             name: 'continent',
             opts: aiFar([ev.player]),
           }, `${name} holds ${cName(c)}${SEP}${worth}`);
-        } else this.play('continent', { distance: 0.6 });
+        } else if (!rung) this.play('continent', { distance: 0.6 });
         // v5 D4: an AI that takes a continent on its own turn says so.
         if (e.ai && d.currentPlayer === ev.player && d.players[ev.player]?.kind === 'ai') this.say(ev.player, 'continent', { continent: cName(c) }, d.turn, d);
         this.log('continent', ev.player, `${name} holds ${cName(c)}${SEP}+${bonus} a turn`);
@@ -1895,8 +2020,18 @@ class Controller {
         if (this.meta?.rings) delete this.meta.rings[ev.player];
         if (this.isHumanSeat(ev.player) && !this.autoplayOn) this.lean();
         this.holdUntil = this.now() + 500;
-        this.audio.stopAll?.();
-        this.play('eliminated', { delay: 0.15 });
+        // v6 (feel.md row 20): duck, don't cut; the knockout sounds with the sweep, and the line and the seat's
+        // dry-out start with it (the display applies this event at its start), not after it.
+        if (!skip) {
+          if (this.board.duckAudio) this.board.duckAudio(120);
+          else if (this.audio.duck) this.audio.duck(120);
+          else this.audio.stopAll?.();
+        }
+        this.play('eliminated');
+        const victim = pName(d, ev.player);
+        // The epitaph names who did it (docs/INK.md A5): 'Sam · taken by John · round 9'.
+        this.announce('elimination', `${upper(victim)} IS OUT`, ev.by, undefined, `${victim}${SEP}taken by ${pName(d, ev.by)}${SEP}round ${Math.max(1, d.round)}`);
+        this.log('elimination', ev.by, `${pName(d, ev.by)} knocked out ${victim}`);
         break;
       }
       case 'cardsTraded': {
@@ -2029,10 +2164,6 @@ class Controller {
         break;
       case 'playerEliminated': {
         if (!skip) this.haptics.play('eliminated');
-        const victim = pName(d, ev.player);
-        // The epitaph names who did it (docs/INK.md A5): 'Sam · taken by John · round 9'.
-        this.announce('elimination', `${upper(victim)} IS OUT`, ev.by, undefined, `${victim}${SEP}taken by ${pName(d, ev.by)}${SEP}round ${Math.max(1, d.round)}`);
-        this.log('elimination', ev.by, `${pName(d, ev.by)} knocked out ${victim}`);
         this.checkAllHumansOut();
         break;
       }
@@ -2065,8 +2196,8 @@ class Controller {
         }
         if (ev.phase !== 'reinforce') this.cardsOpen = false;
         if (ev.phase === 'occupy' && this.state?.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-          // v5.1 E2: all but one moves in by default.
-          this.sel.occupyCount = this.state.phase.max;
+          // v6 (design 6): what the AI would move in (its border garrison stays), not always all but one.
+          this.sel.occupyCount = occupyGuess(this.state);
           this.sel.countTouched = false;
         }
         break;
@@ -2180,6 +2311,8 @@ class Controller {
     g.rolls++;
     g.attLost += ev.attackerLosses;
     g.defLost += ev.defenderLosses;
+    g.lastA = ev.attackerLosses;
+    g.lastD = ev.defenderLosses;
     g.lastRollEnd = this.now();
     this.writeEngagementLog(false);
     // Blitz stopped without taking it, or the source is down to 1: the engagement is over.
@@ -2749,9 +2882,19 @@ class Controller {
       y: info.clientY,
       key: same ? this.nameCard!.key : ++this.nameCardKey,
       history: this.meta ? stoneHistory(this.story(), d, t) : null,
+      // v6 (ux-desktop 6): the territory's box, so the note sits beside the land it describes (desktop only).
+      rect: this.touch ? null : this.screenRect(t),
     };
     this.invalidate();
     return true;
+  }
+
+  private screenRect(t: TerritoryId): NameCardVM['rect'] {
+    try {
+      return this.board.getScreenRect?.(t) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private hideNameCard(): void {
@@ -2907,7 +3050,15 @@ class Controller {
     const t = info.territory;
     const ex = explainTerritory(s, this.explainUi(), t);
     if (!ex.ok || !ex.plan) {
-      if (ex.code) this.reject(ex.code, ex.text);
+      if (ex.code) {
+        this.reject(ex.code, ex.text);
+        // v6 (feel.md row 3): the refusal answers where the eye is, on the tapped territory, beside the tick.
+        try {
+          this.board.shiver?.(t);
+        } catch (err) {
+          console.error(err);
+        }
+      }
       return;
     }
     this.clearRejection();
@@ -3035,8 +3186,40 @@ class Controller {
     }
   }
 
+  /** v6: the Place step that closed this turn can still be reopened (nothing rolled, moved or asked since). */
+  private undoBaseLive(): boolean {
+    const b = this.undoBase;
+    const s = this.state;
+    if (!b || !s || s.turn !== b.turn || s.currentPlayer !== b.state.currentPlayer) return false;
+    return s.phase.kind === 'attack' || s.phase.kind === 'fortify';
+  }
+
+  /** Something Undo can take back right now (a placement this step, or the closed Place step's last one). */
+  private undoAvailable(): boolean {
+    const s = this.state;
+    if (!s) return false;
+    const ph = s.phase;
+    if (ph.kind === 'setup-place') return this.sel.placements.length > 0;
+    if (ph.kind === 'reinforce') return !ph.mustTrade && Object.values(ph.placed).some((v) => (v ?? 0) > 0);
+    return this.undoBaseLive();
+  }
+
   /** Undo takes back the last placement, whole. */
   private undoPlacement(): void {
+    // v6 (ux-desktop 8): after the last army, Undo reopens the Place step (the state as it closed: nothing random
+    // has happened since) and takes the last placement off it.
+    if (this.undoBaseLive()) {
+      const base = this.undoBase!;
+      this.undoBase = null;
+      this.cancelAutoAttack();
+      this.clearLinger();
+      this.boardCue('endTurn', base.state.currentPlayer);
+      this.state = base.state;
+      this.disp = cloneState(base.state);
+      this.board.syncState(base.state);
+      this.save();
+      this.sel = { ...emptySel(), placements: base.placements.map((p) => ({ ...p })) };
+    }
     const s = this.state!;
     const me = s.currentPlayer;
     const ph = s.phase;
@@ -3074,13 +3257,14 @@ class Controller {
     if (!from || !to || s.phase.kind !== 'attack') return;
     const dice = maxAttackDice(s, from);
     if (dice < 1) return;
+    this.autoArmed = null;
     // Always the most dice you can roll.
     const r = this.act(blitz ? { type: 'blitz', player: me, from, to, stopAt: 1 } : { type: 'attack', player: me, from, to, dice: dice as 1 | 2 | 3 });
     if (!r.ok) return;
     const after = this.state!;
     if (after.phase.kind === 'occupy') {
-      // v5.1 E2: all but one moves in by default; the stepper unfolds only if the count is touched.
-      this.sel.occupyCount = after.phase.max;
+      // v6 (design 6): the AI's own count moves in by default; the stepper unfolds only if the count is touched.
+      this.sel.occupyCount = occupyGuess(after);
       this.sel.countTouched = false;
       return;
     }
@@ -3092,6 +3276,7 @@ class Controller {
       // Auto-occupied conquest: chain. v4 A5: no choice was offered, so the line says what moved in.
       const chain = autoChain(after, from, to);
       this.sel = { ...emptySel(), selected: chain };
+      this.armNext(after, to);
       const mv = r.events.find((x): x is Extract<GameEvent, { type: 'armiesMoved' }> => x.type === 'armiesMoved' && x.reason === 'occupy');
       if (mv) {
         this.autoMoved = { to, n: mv.count, chain, turn: after.turn, until: this.now() + AUTO_MOVED_MS };
@@ -3113,6 +3298,20 @@ class Controller {
     this.clearLinger();
     const after = this.state!;
     this.sel = after.phase.kind === 'attack' ? { ...emptySel(), selected: autoChain(after, ph.from, ph.to) } : emptySel();
+    this.armNext(after, ph.to);
+  }
+
+  /**
+   * v6 (design.md 6): after a conquest, arm the next good attack from the territory just taken (the line shows its
+   * odds, Blitz is the gold word; Enter or a click rolls it). It never rolls by itself; nothing good = nothing armed.
+   */
+  private armNext(after: GameState, taken: TerritoryId): void {
+    this.autoArmed = null;
+    if (after.phase.kind !== 'attack' || after.territories[taken].owner !== after.currentPlayer) return;
+    const next = nextAttackFrom(after, taken);
+    if (!next) return;
+    this.sel = { ...emptySel(), selected: taken, target: next };
+    this.autoArmed = { from: taken, to: next, turn: after.turn, at: this.now(), shown: false };
   }
 
   // =========================================================================
@@ -3160,7 +3359,9 @@ class Controller {
     const strip = this.currentStrip();
     // The Cards sheet's own Trade button works whenever the sheet offers it.
     const fromSheet = id === 'trade' && !!this.getViewModel().game?.cards?.trade;
-    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet) return;
+    // v6: U undoes whenever there is a placement to take back, even while a fight is armed (its two words fill the dock).
+    const undoKey = id === 'undo' && this.undoAvailable();
+    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet && !undoKey) return;
     this.clearRejection();
     this.runButton(id);
     this.saveMeta();
@@ -3193,10 +3394,14 @@ class Controller {
         this.sheet(this.cardsOpen);
         break;
       case 'roll':
-        this.doAttack(false);
-        break;
       case 'blitz':
-        this.doAttack(true);
+        // v6: a fight armed for the player is never rolled by the same press that moved in (a double click on
+        // Move lands on Blitz, which sits in the same place): it needs its own press.
+        if (this.autoArmed && sel.selected === this.autoArmed.from && sel.target === this.autoArmed.to && this.now() - this.autoArmed.at < AUTO_ARM_GUARD_MS) {
+          this.inputDropped++;
+          break;
+        }
+        this.doAttack(id === 'blitz');
         break;
       case 'move':
         if (ph.kind === 'occupy') this.doOccupy();
@@ -3418,7 +3623,8 @@ class Controller {
     this.clearRejection();
     this.clearLinger();
     this.cardsOpen = false;
-    this.play('place', { rate: 0.82, volume: 0.9 });
+    // v6 (feel.md row 22): End turn makes no click of its own; the turn passing is the sound (one cue).
+    if (seg !== 'endTurn') this.play('place', { rate: 0.82, volume: 0.9 });
     if (s.phase.kind === 'setup-place') {
       if (seg !== 'done') return;
       const staged = { ...this.sel.staged };
@@ -3429,7 +3635,13 @@ class Controller {
       }
       return;
     }
-    if (s.phase.kind === 'reinforce' && !this.act({ type: 'endReinforce', player: me }).ok) return;
+    if (s.phase.kind === 'reinforce') {
+      const placements = this.sel.placements.map((p) => ({ ...p }));
+      const placedAny = Object.values(s.phase.placed).some((v) => (v ?? 0) > 0);
+      if (!this.act({ type: 'endReinforce', player: me }).ok) return;
+      // v6 (ux-desktop 8): the step closed, but its placements can still be taken back until the first roll.
+      this.undoBase = placedAny ? { state: s, turn: s.turn, placements } : null;
+    }
     this.sel = emptySel();
     if (seg === 'attack') return;
     const ph = this.state!.phase.kind;
@@ -3556,8 +3768,16 @@ class Controller {
       }
       if (this.screen !== 'game') return false;
       if (this.interactive() && this.backOut()) {
+        this.escCancelAt = this.now();
         this.clearRejection();
         this.invalidate();
+        return true;
+      }
+      // v6 (ux-desktop 10): Esc cancels first; the menu opens only on an Esc with nothing to cancel, never on a
+      // held key or one mashed right after a cancel.
+      if (repeat) return true;
+      if (this.now() - this.escCancelAt < ESC_MASH_MS) {
+        this.escCancelAt = this.now();
         return true;
       }
       this.setOverlay('pause');
@@ -3571,6 +3791,7 @@ class Controller {
       return false;
     }
     if (this.screen !== 'game' || this.overlay || this.confirm) return false;
+    if (this.state && this.countKey(key)) return true;
     if (!this.state || (key !== 'Enter' && key !== ' ')) return false;
     if (repeat) return true;
     if (this.turnBanner) this.dismissTurnBanner();
@@ -3603,6 +3824,39 @@ class Controller {
     };
     if (this.busyBlocking()) this.clickThrough(run);
     else run();
+    return true;
+  }
+
+  /**
+   * v6 (ux-desktop 10): ←/→, ↓/↑ and −/+ step the count; digits type it (two quick digits make 12); U undoes. Only on
+   * the driver's own turn with nothing animating in the way. True = the key was this kind (consumed).
+   */
+  private countKey(key: string): boolean {
+    const step = key === 'ArrowLeft' || key === 'ArrowDown' || key === '-' || key === '_' ? -1 : key === 'ArrowRight' || key === 'ArrowUp' || key === '+' || key === '=' ? 1 : 0;
+    const digit = /^[0-9]$/.test(key) ? Number(key) : -1;
+    const undo = key === 'u' || key === 'U';
+    if (!step && digit < 0 && !undo) return false;
+    if (this.receipt || !this.interactive() || this.fightPlaying()) return true;
+    if (this.turnBanner) this.dismissTurnBanner();
+    if (undo) {
+      if (this.undoAvailable()) this.pressButton('undo');
+      return true;
+    }
+    if (this.busyBlocking()) return true;
+    const r = this.countRange();
+    if (!r) return true;
+    if (step) {
+      this.digits = null;
+      this.setCount(r.value + step);
+      return true;
+    }
+    // Digits: a second digit within the beat extends the number when that still fits the range; else it starts over.
+    const now = this.now();
+    const prev = this.digits && now - this.digits.at < DIGIT_MS ? this.digits.v : null;
+    let v = prev !== null && prev * 10 + digit <= r.max ? prev * 10 + digit : digit;
+    if (v === 0) v = r.min;
+    this.digits = { v, at: now };
+    this.setCount(v);
     return true;
   }
 
@@ -3790,6 +4044,13 @@ class Controller {
         break;
       case 'track':
         this.pressTrack(i.seg);
+        break;
+      case 'overview':
+        if (this.screen === 'game' && this.board.setOverview) {
+          const on = !(this.board.isOverview?.() ?? this.overviewOn);
+          this.board.setOverview(on);
+          this.overviewOn = this.board.isOverview?.() ?? on;
+        }
         break;
       case 'resetView':
         if (this.screen === 'game') {
@@ -4108,7 +4369,11 @@ class Controller {
     }
 
     if (ph === 'setup-place' || ph === 'reinforce') {
-      if (ctx.first && ph === 'reinforce') await this.sleep(THINK_TURN_START * k);
+      if (ctx.first && ph === 'reinforce') {
+        // v6: after another AI's turn, a breath between the seats (at Fast, half), so the room sees the hand pass.
+        const breath = this.aiAfterAi ? AI_SEAT_BREATH_MS / (speed === 'fast' ? 2 : 1) : 0;
+        await this.sleep(Math.max(THINK_TURN_START * k, breath));
+      }
       ctx.first = false;
       if (this.state !== s) return; // something else moved the game
       const collected: { ev: GameEvent; after: GameState; end: boolean }[] = [];
@@ -4146,7 +4411,17 @@ class Controller {
       if (isAttackAction(a0)) {
         // One even breath before each engagement, so the line is read before the next begins. (v5.1 B: the cup's
         // rattle went with the cup.)
-        await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
+        // v6 (feel.md row 23): the source glints ~150 ms before the stroke, inside the same breath (never longer).
+        const gap = (ctx.first ? THINK_TURN_START : AI_GAP_MS) * k;
+        const lead = Math.min(gap, GLINT_LEAD_MS * k);
+        if (gap > lead) await this.sleep(gap - lead);
+        if (this.state !== s || !this.aiShouldAct()) return;
+        try {
+          this.board.glintSource?.(a0.from);
+        } catch (err) {
+          console.error(err);
+        }
+        await this.sleep(lead);
         ctx.first = false;
         if (this.state !== s || !this.aiShouldAct()) return;
         await this.aiEngagement(a0, pace);
@@ -4376,7 +4651,21 @@ class Controller {
     if (battle) {
       if (strip.lineKind !== 'rejection') {
         const pair = this.battlePair;
-        const odds = !battle.rolling && !battle.captured && !this.fightPlaying() && pair ? attackOdds(d, pair.from, pair.to, this.settings.showWinChance) : '';
+        let odds = !battle.rolling && !battle.captured && !this.fightPlaying() && pair ? attackOdds(d, pair.from, pair.to, this.settings.showWinChance) : '';
+        // v6 (ux-desktop 7): after a roll the fight says what it cost: 'Ural 6 → Siberia 3 · lost 1 · 61% · likely';
+        // a fight that ended without the capture: '… · held · cost 12'.
+        const g = this.eng;
+        if (pair && g && g.from === pair.from && g.to === pair.to && g.turn === d.turn && g.style === 'full' && !battle.rolling && !battle.captured && !this.fightPlaying()) {
+          if (g.endedAt && !g.conquered && g.rolls > 0) odds = g.attLost > 0 ? `held${SEP}cost ${g.attLost}` : 'held';
+          else if (!g.endedAt && g.rolls > 0) {
+            const r = rollWords(g.lastA ?? 0, g.lastD ?? 0);
+            if (r) {
+              const pctOnly = this.settings.showWinChance && d.territories[pair.from].armies >= 2 ? `${pct(winProbability(d.territories[pair.from].armies, d.territories[pair.to].armies))}%` : '';
+              const lead = r[0].toLowerCase() + r.slice(1);
+              odds = [lead, pctOnly].filter(Boolean).join(SEP);
+            }
+          }
+        }
         strip.fight = { attacker: battle.attacker, defender: battle.defender, odds, captured: battle.captured };
       }
       this.nameCard = null;
@@ -4403,6 +4692,7 @@ class Controller {
       seed: this.gameSeed(s),
       replay: this.replay,
       holding: this.buildHolding(d),
+      overview: this.board.setOverview ? this.overviewOn : null,
     };
   }
 
@@ -4589,6 +4879,9 @@ class Controller {
       boardPreview: this.boardPreview(),
       took,
       tookMoved: am && took === am.to ? am.n : null,
+      canUndo: interactive && this.undoBaseLive(),
+      rollResult: interactive ? this.armedRollResult(d, sel) : null,
+      occupyKeeps: true,
     });
     // v4 A5: after the conquest has played, the auto-move stays said until the driver picks something else.
     if (
@@ -4629,6 +4922,17 @@ class Controller {
     return out;
   }
 
+  /**
+   * v6 (ux-desktop 7): the armed fight's last roll, when it didn't decide it ('Lost 1'), for the line. Only while the
+   * same pair is still armed and the dice have settled.
+   */
+  private armedRollResult(d: GameState, sel: Sel): string | null {
+    const g = this.eng;
+    if (!g || g.endedAt || g.conquered || g.rolls < 1 || g.turn !== d.turn || g.style !== 'full' || this.fightPlaying()) return null;
+    if (sel.selected !== g.from || sel.target !== g.to || d.phase.kind !== 'attack') return null;
+    return rollWords(g.lastA ?? 0, g.lastD ?? 0);
+  }
+
   /** The pair the last buildBattle settled on (null = no fight). */
   private battlePair: { from: TerritoryId; to: TerritoryId } | null = null;
 
@@ -4656,6 +4960,10 @@ class Controller {
     // once the driver backs out or picks something else, the line is theirs again.
     const engOn = !!g && (!interactive || this.fightPlaying() || (!!armed && armed.from === g.from && armed.to === g.to));
     if (g && !g.endedAt && g.style === 'full' && g.turn === d.turn && engOn) {
+      pair = g;
+      useEng = true;
+    } else if (lingering && g!.conquered && armed && this.autoArmed && armed.from === this.autoArmed.from && armed.to === this.autoArmed.to) {
+      // v6: the capture's words ('Egypt captured · cost 27') keep their second before the next armed fight shows.
       pair = g;
       useEng = true;
     } else if (armed && contested(armed)) {
@@ -4688,7 +4996,7 @@ class Controller {
       attacker: { seat: seatRef(d, attacker), territory: tName(from), armies: a },
       defender: { seat: seatRef(d, defender), territory: tName(to), armies: def },
       rolling: this.rolling && useEng,
-      captured: decided && g!.conquered ? `${tName(to)} captured` : null,
+      captured: decided && g!.conquered ? capturedWords(to, g!.attLost) : null,
       tray: this.trayUp,
       trayRect: this.trayRect,
     };
@@ -5288,7 +5596,7 @@ class Controller {
       this.validateSel();
       const s = this.state!;
       if (s.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-        this.sel.occupyCount = s.phase.max;
+        this.sel.occupyCount = occupyGuess(s);
       }
       this.invalidate();
       return { ok: true };

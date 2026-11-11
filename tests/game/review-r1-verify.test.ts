@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent, GameState, TerritoryId } from '../../src/engine';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardView, PlayEventOptions, TerritoryPointerInfo } from '../../src/render/BoardView';
-import { createController } from '../../src/game/controller';
+import { createController, occupyGuess } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY } from '../../src/game/storage';
 import { eventDurationMs, scaledDuration } from '../../src/game/timingModel';
 import { board as fixture } from './fixtures';
@@ -137,6 +137,10 @@ describe('Esc backs out one level at a time, then opens the menu', () => {
     // Nothing armed: the action zone is empty; the track carries Fortify and End turn.
     expect(c.hooks.ui().buttons).toEqual([]);
     expect(c.hooks.ui().track).toEqual(['done:place', 'current:attack', 'eligible:fortify', 'eligible:endTurn']);
+    // v6: an Esc mashed right after a cancel never falls through to the menu; a fresh one opens it.
+    c.handleKey('Escape');
+    expect(c.getViewModel().overlay).toBeNull();
+    await vi.advanceTimersByTimeAsync(700);
     c.handleKey('Escape');
     expect(c.getViewModel().overlay).toBe('pause');
     c.dispose();
@@ -149,9 +153,11 @@ describe('occupy: one count control and Move N, nothing else', () => {
     s.conqueredThisTurn = true;
     const { c } = await resume(s);
     const strip = c.getViewModel().game!.strip;
-    expect(strip.line).toBe('Move into Ontario');
-    expect(strip.count).toEqual({ control: 'slider', value: 9, min: 3, max: 9, collapsed: true });
-    expect(strip.buttons).toEqual([{ id: 'move', label: 'Move 9', primary: true }]);
+    // v6: the default is the AI's own count; the line says what stays behind.
+    const guess = occupyGuess(s);
+    expect(strip.line).toBe(`Move into Ontario · Greenland keeps ${10 - guess}`);
+    expect(strip.count).toEqual({ control: 'slider', value: guess, min: 3, max: 9, collapsed: true });
+    expect(strip.buttons).toEqual([{ id: 'move', label: `Move ${guess}`, primary: true }]);
     // Mandatory: the track is visibly disabled and explains itself.
     expect(strip.track.disabled).toBe(true);
     c.intent({ type: 'track', seg: 'endTurn' });

@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardView, TerritoryPointerInfo } from '../../src/render/BoardView';
-import { createController } from '../../src/game/controller';
+import { createController, occupyGuess } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY, SETTINGS_KEY, type KV } from '../../src/game/storage';
 import type { GameEvent, GameState, TerritoryId } from '../../src/engine';
 import { board as fixture, card } from './fixtures';
@@ -148,8 +148,8 @@ describe('A · whose turn: a line, not a window', () => {
     expect(c.getViewModel().game!.cards?.open ?? false).toBe(false);
     // Sam acts at once: nothing to dismiss.
     expect(c.hooks.ui().trackLive).toBe(true);
-    // B: one wood set-down, no cup slide, no rattle
-    expect(au.calls).toContain('cue:cupSet');
+    // B: v6 a person's turn is one cue (turnStart): no wood set-down, no cup slide, no rattle
+    expect(au.calls).not.toContain('cue:cupSet');
     expect(au.calls).not.toContain('cue:cupSlide');
     expect(au.calls).not.toContain('cue:rattle');
     // tolerated no-ops from an older HUD
@@ -320,14 +320,15 @@ describe('D · personalities hidden until they speak', () => {
 });
 
 describe('E · defaults', () => {
-  it('occupy: all but one by default, the count folded until touched', async () => {
+  it('occupy: the AI\'s own count by default (v6), the count folded until touched', async () => {
     const s = table({ kind: 'occupy', from: 'ural', to: 'siberia', min: 3, max: 7, previousOwner: 2 }, (st) => {
       st.territories.siberia = { owner: 0, armies: 0 };
     });
     const { c } = await load(s);
     let u = c.hooks.ui();
-    expect(u.primary).toBe('Move 7');
-    expect(u.count).toMatchObject({ value: 7, collapsed: true });
+    const guess = occupyGuess(s);
+    expect(u.primary).toBe(`Move ${guess}`);
+    expect(u.count).toMatchObject({ value: guess, collapsed: true });
     c.intent({ type: 'setCount', value: 7 });
     await vi.advanceTimersByTimeAsync(20);
     u = c.hooks.ui();

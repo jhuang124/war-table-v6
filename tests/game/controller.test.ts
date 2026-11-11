@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyAction, chooseAiAction, type GameEvent, type GameState, type PlayerConfig, type TerritoryId } from '../../src/engine';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo } from '../../src/render/BoardView';
-import { createController, type GameController } from '../../src/game/controller';
+import { createController, occupyGuess, type GameController } from '../../src/game/controller';
 import { memoryKV, SAVE_KEY, SETTINGS_KEY } from '../../src/game/storage';
 import { eventDurationMs, scaledDuration } from '../../src/game/timingModel';
 import { board as fixture } from './fixtures';
@@ -443,9 +443,11 @@ describe('resume', () => {
     await vi.advanceTimersByTimeAsync(50);
     const strip = c.getViewModel().game!.strip;
     expect(strip.mode).toBe('occupy');
-    expect(strip.line).toBe('Move into Siberia');
-    expect(strip.count).toEqual({ control: 'stepper', value: 7, min: 3, max: 7, collapsed: true });
-    expect(strip.buttons.map((b) => b.label)).toEqual(['Move 7']);
+    // v6: the default is the count the AI would move in (occupyGuess), and the line says what stays behind.
+    const guess = occupyGuess(s);
+    expect(strip.line).toBe(`Move into Siberia · Ural keeps ${8 - guess}`);
+    expect(strip.count).toEqual({ control: 'stepper', value: guess, min: 3, max: 7, collapsed: true });
+    expect(strip.buttons.map((b) => b.label)).toEqual([`Move ${guess}`]);
     expect(strip.track.disabled).toBe(true);
     expect(fb.highlights.arrow).toEqual({ from: 'ural', to: 'siberia', kind: 'attack' });
     // A board click never confirms: Move N does, and the new territory is the source.
@@ -456,8 +458,9 @@ describe('resume', () => {
     await until(() => c.hooks.isIdle(), 3000);
     const after = c.hooks.getState()!;
     expect(after.phase.kind).toBe('attack');
-    expect(after.territories.siberia.armies).toBe(7);
-    expect(c.hooks.ui().line).toBe('Attack from Siberia · click an enemy');
+    expect(after.territories.siberia.armies).toBe(guess);
+    // v6: the next good attack from Siberia is armed when there is one (never rolled); else Siberia is the source.
+    expect(c.hooks.ui().line).toMatch(/^(Attack from Siberia · click an enemy|Siberia → .*)$/);
     c.dispose();
   });
 
