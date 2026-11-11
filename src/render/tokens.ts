@@ -401,12 +401,17 @@ void main() {
   }
   // v6 the capital: a second brushed rim just outside the stone (a hair of paper between), in its first
   // holder's pigment; the pen swells and dries a little round it, like the coasts
+  // [v6 integration] it reads on its own seat's wash too: a light core of that pigment (lifted toward ivory) laid
+  // in a hair of deep ink on both sides, so it never sinks into a same-coloured territory, on any stone size
   float capA = 0.0;
+  float capK = 0.0;
   if (vCap.w > 0.0) {
     vec4 cn = texture2D(uNoise, p * 0.23 + seed * 2.3);
-    float cw = 1.55 + 0.4 * (nrm(cn.g) - 0.5);
-    float cd = abs(d - (1.0 + 3.8 * fw)) / fw;
-    capA = (1.0 - smoothstep(cw - 0.5, cw + 0.5, cd)) * (0.82 + 0.18 * nrm(cn.r)) * vCol.a * (1.0 - dry);
+    float cw = 1.25 + 0.35 * (nrm(cn.g) - 0.5);
+    float cd = abs(d - (1.0 + 4.6 * fw)) / fw;
+    float grain = (0.84 + 0.16 * nrm(cn.r)) * vCol.a * (1.0 - dry);
+    capA = (1.0 - smoothstep(cw - 0.5, cw + 0.5, cd)) * grain;
+    capK = (1.0 - smoothstep(cw + 1.1, cw + 2.1, cd)) * grain * 0.7;
   }
   // v6 the seat's emblem on the stone's upper-left rim (colour-blind backup): an ivory hairline mark on a
   // pool of the seat's deep ink, the size of the top strip's
@@ -421,7 +426,7 @@ void main() {
     embS = (1.0 - smoothstep(0.55 * ew, 1.25 * ew, abs(sd))) * vEmb.z;
     embF = (1.0 - smoothstep(-0.2 * ew, 0.6 * ew, sd - 0.28)) * vEmb.z;
   }
-  if (inside < 0.004 && shadow < 0.004 && ringA < 0.004 && capA < 0.004 && embF < 0.004) discard;
+  if (inside < 0.004 && shadow < 0.004 && ringA < 0.004 && capK < 0.004 && embF < 0.004) discard;
   // the fill: a flat wash of the seat's base (a hair of paper grain, like every wash on the board)
   vec4 nz = texture2D(uNoise, p * 0.18 + seed);
   // (more pigment than the territory's own wash: the same colour, laid on thicker, so the stone stands off it)
@@ -457,8 +462,12 @@ void main() {
   float outA = a + sa * (1.0 - a);
   outC += vRing.rgb * ringA * (1.0 - outA);
   outA += ringA * (1.0 - outA);
-  outC += vCap.rgb * capA * (1.0 - outA);
-  outA += capA * (1.0 - outA);
+  // the capital: its deep-ink bed first (behind the stone), then the light core over the bed
+  float kb = capK * (1.0 - outA);
+  outC += vec3(0.05, 0.06, 0.1) * kb;
+  outA += kb;
+  outC = mix(outC, vCap.rgb * outA, capA * (1.0 - a));
+  outA = max(outA, capA * (1.0 - a));
   // the emblem over all: its dark pool, then the ivory line
   float ef = embF * 0.6 * (1.0 - dry) * (1.0 - 0.8 * ghost);
   outC = vDeep * 0.45 * ef + outC * (1.0 - ef);
@@ -1628,7 +1637,7 @@ export class TokenSystem {
     const ep = Math.min(EMBLEM_PX * this.emblemScale, 0.42 * Rpx);
     if (o.emb && !o.ghost && this._emblemOn) s.set('iEmb', o.emb, ep / Rpx, 1, o.side ?? 1);
     else s.set('iEmb', 0, 0, 0, 0);
-    if (o.cap && !o.ghost) s.set('iCap', o.cap[0], o.cap[1], o.cap[2], 1 + 6.2 / Rpx);
+    if (o.cap && !o.ghost) s.set('iCap', o.cap[0], o.cap[1], o.cap[2], 1 + 8.5 / Rpx);
     else s.set('iCap', 0, 0, 0, 0);
     s.push();
   }

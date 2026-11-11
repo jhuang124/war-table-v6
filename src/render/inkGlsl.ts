@@ -702,7 +702,7 @@ void main() {
   // recede toward the paper
   c = mix(c, paper, 0.3 * uDim) * (1.0 - 0.05 * uDim);
   c *= 1.0 + 0.07 * uLight;
-  c = mix(c, uIvory, 0.14 * uFlash);
+  c = mix(c, uIvory, 0.22 * uFlash); // v6 integration: 0.14 → 0.22 so the AI glint reads at 1440 (the win wave rises with it)
   // the crossing veils drift over the land too (thinner there, never over a number: those sit above)
   vec2 mv = mistAt(bp);
   c = mix(c, MIST, min(1.0, mv.y * 0.6 + mv.x * 0.12) * 0.08 * uMist);

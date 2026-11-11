@@ -403,7 +403,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const m = new Map<TerritoryId, RGB>();
     for (const [t, seat] of Object.entries(capitals) as [TerritoryId, PlayerId][]) {
       const p = seat !== undefined && seat >= 0 ? pal(seat) : null;
-      if (p) m.set(t, mixRgb(hexToRgb(p.base), hexToRgb(p.light), 0.55));
+      // [v6 integration] the light tone, so the core stands off its own seat's wash
+      if (p) m.set(t, mixRgb(hexToRgb(p.base), hexToRgb(p.light), 0.85));
     }
     tokens.setCapitals(m);
   };
