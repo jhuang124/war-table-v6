@@ -3281,8 +3281,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       if (!changed) break;
     }
     parts = MAP.territoryIds.map((_, i) => at(i));
-    // (reported at the 1 px standard of a real overlap; the fit itself keeps tokens.PIECE_AIR of air where it can)
-    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : (A: Parts, B: Parts) => piecesClash(A, B, 1))(parts[i], parts[j])).map(([i, j]) => `${MAP.territoryIds[i]}/${MAP.territoryIds[j]}`);
+    // (reported at the 1 px standard of a real overlap, by the same rule the fit used (phones: crowded); the fit
+    // itself keeps tokens.PIECE_AIR of air where it can)
+    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : (A: Parts, B: Parts) => piecesClash(A, B, 1, compact))(parts[i], parts[j])).map(([i, j]) => `${MAP.territoryIds[i]}/${MAP.territoryIds[j]}`);
     capsFloored = caps.filter((c) => c <= dmin + 1e-6).length;
     capsLowered = caps.filter((c) => c < dmax - 1e-6).length;
     capsFigSmaller = figK.filter((k) => k < FIG_K - 1e-6).length;
