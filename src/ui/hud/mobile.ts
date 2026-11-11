@@ -243,7 +243,8 @@ export class NameCard {
     const r = this.rect;
     if (r) {
       x = r.x + r.w + gap + w <= W - 12 ? r.x + r.w + gap : r.x - gap - w;
-      y = this.py - hgt / 2;
+      // level with the pointer while it is over the land; held to the land's own height when it has moved off
+      y = Math.min(Math.max(this.py, r.y), r.y + r.h) - hgt / 2;
       if (x < 12) {
         // Neither side has room: above or below the box.
         x = this.px - w / 2;

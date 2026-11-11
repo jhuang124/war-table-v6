@@ -681,7 +681,7 @@ const ESC_MASH_MS = 600;
 /** v6: two digit keys this close together type one number (1, 2 → 12). */
 const DIGIT_MS = 900;
 /** v6: an attack armed after a conquest can't be rolled by a press this soon after it was armed. */
-const AUTO_ARM_GUARD_MS = 450;
+const AUTO_ARM_GUARD_MS = 250;
 
 /** v5.1 E1: Place → Attack advances by itself this long after the last army is placed. */
 const AUTO_ATTACK_MS = 250;
@@ -2838,6 +2838,8 @@ class Controller {
   private overTile: TerritoryId | null = null;
 
   private nameCardKey = 0;
+  /** The territory the note describes (its count and holder are kept current). */
+  private nameCardT: TerritoryId | null = null;
 
   /** Long-press on touch (docs/MOBILE.md §3): the name card above the finger; release hides it. Never selects. */
   private onLongPress(info: TerritoryPointerInfo | null | undefined): void {
@@ -2872,6 +2874,7 @@ class Controller {
     const same = !this.touch && this.nameCard?.territory === tName(t);
     const c = mapDefOf(d.config).territories[t].continent;
     const owner = tile.owner >= 0 && d.players[tile.owner] ? seatRef(d, tile.owner) : null;
+    this.nameCardT = t;
     this.nameCard = {
       territory: tName(t),
       continent: cName(c),
@@ -3725,6 +3728,8 @@ class Controller {
     const tgt = e.target as HTMLElement | null;
     if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT' || tgt.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+    // v6: the keys sheet (src/ui/hud/keys.ts) owns every key while it is up: its Esc closes it, never opens the menu.
+    if (typeof document !== 'undefined' && document.querySelector('.keys-scrim:not(.hidden)')) return;
     const key = e.key;
     // A keyboard-focused HUD control gets its own Enter/Space.
     const active = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
@@ -4643,6 +4648,12 @@ class Controller {
     const interactive = this.interactive() && d.currentPlayer === s.currentPlayer;
     const sel = this.viewSel();
     const banner = this.banner?.vm.kind === 'elimination' ? this.banner.vm : (this.turnBanner ?? this.banner?.vm ?? null);
+    // v6: the note follows its territory's count and holder (a placement under the pointer, a capture).
+    const nt = this.nameCardT && d.territories[this.nameCardT];
+    if (this.nameCard && nt) {
+      const owner = nt.owner >= 0 && d.players[nt.owner] ? seatRef(d, nt.owner) : null;
+      if (nt.armies !== this.nameCard.armies || owner?.id !== this.nameCard.owner?.id) this.nameCard = { ...this.nameCard, armies: nt.armies, owner };
+    }
     const strip = this.buildStripVM(d, sel, interactive);
     const cards = this.buildCards(d, interactive);
     const battle = this.buildBattle(d, sel, interactive);
