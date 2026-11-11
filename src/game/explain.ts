@@ -4,7 +4,9 @@
 // click that commits; rolling, placing, occupying and changing phase are buttons and the Turn Track.
 
 import {
+  OPENING_NO_ATTACK,
   UNCLAIMED,
+  attacksLocked,
   mapDefOf,
   fortifySources,
   fortifyTargets,
@@ -165,7 +167,8 @@ export function explainTerritory(state: GameState, ui: ExplainUi, t: TerritoryId
         if (ts.owner !== me) return notYours();
         return ok('Place here', { kind: 'pick', t });
       }
-      // All placed: the track moves on, never a board click.
+      // All placed: the track moves on, never a board click. v6: on the quiet opening there is no Attack to go on to.
+      if (attacksLocked(state)) return no('none_left', `${OPENING_NO_ATTACK.replace(/\.$/, '')}${SEP}fortify or end your turn`);
       return no('none_left', `All armies placed${SEP}${click()} Attack to go on`);
     }
     case 'attack':
