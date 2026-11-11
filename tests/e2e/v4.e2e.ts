@@ -1,5 +1,5 @@
 // v4 audits (_claude/v4/PLAN.md §5b): the checks that can be automated for "one hand".
-//   E6 type scale   every font-size on the game screen is on the scale 11 / 14 / 18 / 24 / 40 px
+//   E6 type scale   every font-size on the game screen is on the scale 11 / 14 / 18 / 24 / 40 px (× the HUD scale for rem sizes)
 //   E6 numerals     every stone numeral ≥ 18 px on desktop
 //   P1 drift        a mist edge moves ≥ 1 px over 2 s, the coast glow ≥ 1 px (BoardView.paperDrift hook)
 //   E5 tier bands   every board event that carries a tier keeps its motion inside the tier's band at 1×
@@ -32,8 +32,12 @@ const fonts = await page.evaluate(() => {
   }
   return { out, seen: Array.from(seen.entries()).sort((a, b) => a[0] - b[0]) };
 });
-const offScale = fonts.out.filter((f) => !SCALE.some((s) => Math.abs(f.px - s) <= 0.75) && !/wordmark|title-word/.test(f.sel));
-results.push(`type sizes on screen: ${fonts.seen.map(([px, n]) => `${px}px×${n}`).join(', ')}`);
+// v6: the HUD grows with the screen (src/ui/uiScale.ts sets the root font-size: 1440×900 → 1.0625), so a size set in
+// rem sits on the scale times that factor; a size set in px stays on the bare scale.
+const hudScale = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize) / 16);
+const steps = [...SCALE, ...SCALE.map((s) => s * hudScale)];
+const offScale = fonts.out.filter((f) => !steps.some((s) => Math.abs(f.px - s) <= 0.75) && !/wordmark|title-word/.test(f.sel));
+results.push(`type sizes on screen (HUD scale ${hudScale.toFixed(4)}): ${fonts.seen.map(([px, n]) => `${px}px×${n}`).join(', ')}`);
 check(offScale.length === 0, `E6 every font-size on the game screen is on the scale (${offScale.length} off: ${[...new Set(offScale.map((f) => `${f.sel} ${f.px.toFixed(1)}px "${f.text}"`))].slice(0, 6).join('; ')})`, results);
 
 // --- E6 numerals ---------------------------------------------------------------------------------------

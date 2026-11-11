@@ -81,7 +81,9 @@ if (so!.phase.kind === 'occupy') {
   await idle(page);
   await rendered(page);
   const after = await ui(page);
-  check(after.line === beforeU.line && after.line === 'Move into Siberia', `mid-occupy line restored: ${after.line}`, results);
+  // v6 (A2 12): the occupy line says what stays behind ('· Ural keeps N', N = Ural's armies less the move).
+  const keeps = so!.territories.ural.armies - (after.count?.value ?? 0);
+  check(after.line === beforeU.line && after.line === `Move into Siberia · Ural keeps ${keeps}`, `mid-occupy line restored: ${after.line}`, results);
   check(after.primary === beforeU.primary && /^Move \d+$/.test(after.primary ?? ''), `occupy primary restored: ${after.primary}`, results);
   const range = after.count ? after.count.max - after.count.min + 1 : 0;
   check(!!after.count && after.count.control === (range <= 6 ? 'stepper' : 'slider') && `Move ${after.count.value}` === after.primary, `count holds the smart default (${after.count?.control} ${after.count?.value})`, results);
@@ -90,7 +92,8 @@ if (so!.phase.kind === 'occupy') {
   await clickBtn(page, 'btn-move');
   await idle(page);
   const am = await ui(page);
-  check((await state(page))!.phase.kind === 'attack' && /^Attack from Siberia/.test(am.line), `Move after resume chains to Siberia: "${am.line}"`, results);
+  // v6 (A2 12): after the move the next good attack from the new territory is armed when there is one.
+  check((await state(page))!.phase.kind === 'attack' && /^(Attack from Siberia|Siberia → [A-Z][\w ]+ · )/.test(am.line), `Move after resume chains to Siberia: "${am.line}"`, results);
   await page.screenshot({ path: 'artifacts/e2e/resume-occupy.png' });
 } else check(false, `expected an occupy step, got ${so!.phase.kind}`, results);
 

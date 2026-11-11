@@ -4,8 +4,8 @@
 //     - no HUD text and no undried board name intersects the dice ring's box (the ring carries dice only)
 //     - the one line carries the fight: both territory names and both counts ([data-testid="battle"])
 //     - the territory note is absent (and a hover mid-roll does not bring it back)
-//   after the ring dries: hovering a territory writes the note in the left margin (x < 320 px), never over
-//   the board's centre
+//   after the ring dries: hovering a territory writes the note beside it (v6: NameCardVM.rect), never over
+//   the territory or the board's centre
 //   phone 390×844 · armed + rolling: the fight is in the line, no note; after: a long-press writes the note in
 //   the dock's line slot (above the rule), two lines at most
 // Screenshots → artifacts/fight-text/.
@@ -119,7 +119,7 @@ const look = (p: Page) =>
   const after = await look(page);
   check(!after.fight && after.dried.length === 0, `desktop after: the fight left the line ("${after.line}") and the names came back (${after.dried.join(', ') || 'none dried'})`, results);
 
-  // after the ring: a hover writes the note in the left margin, never over the board's centre
+  // after the ring: a hover writes the note beside the territory, never over the board's centre
   const india = (await page.evaluate(() => window.__risk.screenPos('india')))!;
   await page.mouse.move(india.x + 1, india.y + 6);
   await page.waitForTimeout(450);
@@ -133,7 +133,12 @@ const look = (p: Page) =>
   const W = 1440;
   const H = 900;
   check(!!note && /India/.test(note.text) && /Asia/.test(note.text), `desktop: hovering India writes its note ("${note?.text}")`, results);
-  check(!!note && note.x < 320 && note.right < W * 0.35, `desktop: the note sits in the left margin (x ${Math.round(note?.x ?? -1)}–${Math.round(note?.right ?? -1)})`, results);
+  // v6 (A2 13): the note sits beside the territory (NameCardVM.rect), not in the margin: clear of India's piece,
+  // its near edge within 160 px of it and level with it.
+  const gapX = note ? Math.max(note.x - india.x, india.x - note.right, 0) : Infinity;
+  const gapY = note ? Math.max(note.y - india.y, india.y - note.bottom, 0) : Infinity;
+  const covers = !!note && india.x >= note.x && india.x <= note.right && india.y >= note.y && india.y <= note.bottom;
+  check(!!note && !covers && gapX <= 160 && gapY <= 80, `desktop: the note sits beside India (x ${Math.round(note?.x ?? -1)}–${Math.round(note?.right ?? -1)}, y ${Math.round(note?.y ?? -1)}–${Math.round(note?.bottom ?? -1)}; India at ${Math.round(india.x)},${Math.round(india.y)}; gap ${Math.round(gapX)}×${Math.round(gapY)})`, results);
   check(!!note && note.y >= 60 && !(note.x < W / 2 && note.right > W / 2 && note.y < H / 2 && note.bottom > H / 2), `desktop: never over the board's centre (y ${Math.round(note?.y ?? -1)})`, results);
   check(!!note && /rgba\(0, 0, 0, 0\)|transparent/.test(note.bg), `desktop: no box behind it (${note?.bg})`, results);
   // the ocean: it dries

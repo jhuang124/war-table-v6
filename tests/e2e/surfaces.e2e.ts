@@ -114,7 +114,7 @@ if (run('1')) {
       title: (document.querySelector(`[data-testid="seat-pers-${i}-warlord"]`) as HTMLElement | null)?.title,
     })),
   );
-  check(pers.map((p) => p.on).join(',') === 'Any,Any,Any' && pers.every((p) => !p.line && /Remembers who hurt it/.test(p.title ?? '')), `AI seats default to Any (random, hidden), no line under it (${JSON.stringify(pers)})`, results);
+  check(pers.map((p) => p.on).join(',') === 'Any,Any,Any' && pers.every((p) => !p.line && /^Fights all turn, takes long odds, never forgets who hurt it\.$/.test(p.title ?? '')), `AI seats default to Any (random, hidden), no line under it (${JSON.stringify(pers)})`, results);
   await pickMap(page, 'true-world');
   await settleUi(page);
   const picked = await page.evaluate(() => ({
@@ -237,18 +237,26 @@ if (run('2')) {
   );
   const johnMark = await page.locator('[data-testid="seat-standing-0"]').isVisible().catch(() => false);
   check(marks.every((m, i) => m === `st-${ais[i].standing}`) && !johnMark, `each AI ring carries its standing mark, John's none shown (${marks.join(', ')})`, results);
-  // a hover over a ring writes its reason in the one line; leaving puts it away
+  // v6: a hover over a ring opens its seat card, which says the reason; the one line is left alone (no duplicate).
+  // Leaving puts the card away.
   const who = ais.find((r) => r.canAskPeace) ?? ais[0];
   const ring = page.locator(`[data-testid="seat-${who.seat}"]`);
   const box = (await ring.boundingBox())!;
+  const line0 = (await ui(page)).line;
+  const reasonText = (who.reason ?? '').replace(/(^|[\s(])-(?=\d)/g, '$1−');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForFunction((r) => window.__risk.ui().line === r, who.reason, { timeout: 2000 }).catch(() => undefined);
+  const cardText = () => page.evaluate(() => {
+    const c = document.querySelector<HTMLElement>('[data-testid="seat-card"]');
+    return c && !c.classList.contains('hidden') ? c.innerText.replace(/\s+/g, ' ') : '';
+  });
+  await page.waitForFunction((r) => (document.querySelector('[data-testid="seat-card"]:not(.hidden)')?.textContent ?? '').includes(r), reasonText, { timeout: 2000 }).catch(() => undefined);
   let u = await ui(page);
-  check(u.line === who.reason, `hover on ${who.name}'s ring: the line says "${u.line}" (reason "${who.reason}")`, results);
+  const card = await cardText();
+  check(card.includes(reasonText) && u.line === line0 && u.line !== who.reason, `hover on ${who.name}'s ring: its card says "${reasonText}", the line stays "${u.line}"`, results);
   await page.mouse.move(720, 500);
-  await page.waitForFunction((r) => window.__risk.ui().line !== r, who.reason, { timeout: 2000 }).catch(() => undefined);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="seat-card"]:not(.hidden)'), null, { timeout: 2000 }).catch(() => undefined);
   u = await ui(page);
-  check(u.line !== who.reason, `leaving the ring puts the reason away ("${u.line}")`, results);
+  check(!(await cardText()) && u.line !== who.reason, `leaving the ring puts the card away ("${u.line}")`, results);
   await shot(page, 'standing-marks-1440x900');
   // a tap on a ring that can be asked: "Ask X for peace" in the line, a bare Ask word
   check(ais.some((r) => r.canAskPeace), `on John's turn some AI can be asked (${ais.filter((r) => r.canAskPeace).map((r) => r.name).join(', ') || 'none'})`, results);
@@ -347,21 +355,30 @@ for (const form of run('4') ? (['1440x900', 'iphone-land'] as const) : []) {
   await page.waitForFunction(() => window.__risk.ui().screen === 'game' && !!window.__risk.getState());
   await idle(page);
   await page.waitForTimeout(1700);
+  // v6: the grudge tick and the native tooltip went; a grudge (≥ 2) is said by the seat's card and its label.
   const marks = await page.evaluate(() => {
-    const g = document.querySelector<HTMLElement>('[data-testid="seat-grudge-1"]');
+    const visible = (el: Element | null) => !!el && getComputedStyle(el).display !== 'none' && !el.classList.contains('hidden');
     return {
-      grudge: g ? { title: g.title, color: getComputedStyle(g).color, against: g.dataset.against } : null,
-      others: document.querySelectorAll('.sc-grudge').length,
-      pers: [...document.querySelectorAll<HTMLElement>('.seat-chip')].map((c) => (c.querySelector('.sc-pers') && getComputedStyle(c.querySelector('.sc-pers')!).display !== 'none' ? c.querySelector('.sc-pers')!.textContent : null)),
-      titles: [...document.querySelectorAll<HTMLElement>('.seat-chip')].map((c) => c.title),
+      ticks: document.querySelectorAll('[data-testid^="seat-grudge-"], .sc-grudge').length,
+      pers: [...document.querySelectorAll<HTMLElement>('.seat-chip')].map((c) => (visible(c.querySelector('.sc-pers')) ? c.querySelector('.sc-pers')!.textContent : null)),
+      labels: [...document.querySelectorAll<HTMLElement>('.seat-chip')].map((c) => c.getAttribute('aria-label') ?? ''),
     };
   });
-  const john = 'rgb(195, 155, 140)'; // Vermilion's light
+  const grudgeSaid = marks.labels[1].includes(', holds a grudge against John') && !/grudge/.test(marks.labels[3]);
   if (form === '1440x900') {
-    check(!!marks.grudge && marks.grudge.title === 'Holds a grudge against John' && marks.grudge.color === john && marks.others === 1, `Cobalt (grudge 3.2 against John) has one brush tick in John's colour, "${marks.grudge?.title}"; Emerald's 1.4 shows nothing (${JSON.stringify(marks.grudge)})`, results);
+    const box = (await page.locator('[data-testid="seat-1"]').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForSelector('[data-testid="seat-card"]:not(.hidden)', { timeout: 2000 }).catch(() => undefined);
+    const card1 = await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="seat-card"]:not(.hidden)')?.innerText ?? '');
+    const box3 = (await page.locator('[data-testid="seat-3"]').boundingBox())!;
+    await page.mouse.move(box3.x + box3.width / 2, box3.y + box3.height / 2);
+    await page.waitForFunction(() => /Opportunist|Emerald/.test(document.querySelector<HTMLElement>('[data-testid="seat-card"]:not(.hidden)')?.innerText ?? ''), null, { timeout: 2000 }).catch(() => undefined);
+    const card3 = await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="seat-card"]:not(.hidden)')?.innerText ?? '');
+    await page.mouse.move(720, 500);
+    check(grudgeSaid && /Holds a grudge against John/.test(card1) && !/grudge/.test(card3) && marks.ticks === 0, `Cobalt (grudge 3.2 against John): its card and label say so; Emerald's 1.4 says nothing; no tick marks (${marks.ticks}) ("${card1.replace(/\s+/g, ' ')}")`, results);
     check(marks.pers.slice(1).join(',') === 'Warlord,Turtle,Opportunist', `once spoken, each AI's personality word under its name (${marks.pers.join(', ')})`, results);
   } else {
-    check(marks.pers.every((p) => p === null) && /^Warlord · /.test(marks.titles[1]), `phones: no personality words on the strip, the title carries it ("${marks.titles[1]}")`, results);
+    check(marks.pers.every((p) => p === null) && /^Cobalt, Warlord: /.test(marks.labels[1]) && grudgeSaid, `phones: no personality words on the strip, the seat's label carries it ("${marks.labels[1]}")`, results);
   }
   await shot(page, `strip-personality-grudge-${form}`);
   if (form === '1440x900') await page.screenshot({ path: `${OUT}/strip-personality-grudge-closeup.png`, clip: { x: 0, y: 0, width: 760, height: 90 } });
@@ -416,7 +433,8 @@ for (const form of run('5') ? (['1440x900', 'iphone-land'] as const) : []) {
   const neutralTiles = Object.values(grey).filter((t) => t.owner === n?.id).length;
   // Dealt 14; by the time the strip is read the AI may already have taken one or two, so accept 1–14.
   check(!!n && (n.color as string) === 'neutral' && n.name === 'Neutral' && neutralTiles >= 1 && neutralTiles <= 14, `${form}: a 2-player game deals the grey neutral seat (${n?.name}, ${n?.color}, ${neutralTiles} territories)`, results);
-  check(!!seat && seat.name === 'Neutral' && seat.terr === String(neutralTiles) && Math.abs(seat.opacity - 0.6) < 0.01 && !seat.current && seat.cups === 0, `${form}: its ring keeps its count, dimmed, never current, no cup anywhere (${JSON.stringify(seat)})`, results);
+  // v6: every seat but the current one waits at 0.66 (the active seat is unmistakable); the neutral seat with them.
+  check(!!seat && seat.name === 'Neutral' && seat.terr === String(neutralTiles) && Math.abs(seat.opacity - 0.66) < 0.01 && !seat.current && seat.cups === 0, `${form}: its ring keeps its count, dimmed, never current, no cup anywhere (${JSON.stringify(seat)})`, results);
   await shot(page, `neutral-2p-${form}`);
   allErrors.push(...ctx.errors);
   await ctx.browser.close();
@@ -474,10 +492,10 @@ if (run('7')) {
       // In the page: every stone as drawn (its body box, its diameter at home), every other territory's
       // coast projected through the home camera; a coast point inside a stone (1.5 px in from its painted
       // rim) is a stone over that territory's land.
-      const r = await page.evaluate(() => {
+      const r = await page.evaluate((compact) => {
         type V = { x: number; y: number; z: number; clone(): V; copy(v: V): V; project(c: unknown): V };
         type Tile = { id: string; anchor: [number, number]; anchorW: V; bbox: [number, number, number, number]; rings: [number, number][][] };
-        const d = (window as unknown as { __board: { __debug: { rig: { homeCamera(): unknown }; canvas: HTMLCanvasElement; overlay: { pieceRects: (id: string) => { box: number[] } | null }; tiles: { list: Tile[] }; tokens: { stoneOf: (id: string) => { n: number; dPx: number; capPx: number }; dminPx: number; sizeScale: number } } } }).__board.__debug;
+        const d = (window as unknown as { __board: { __debug: { rig: { homeCamera(): unknown }; canvas: HTMLCanvasElement; overlay: { pieceRects: (id: string) => { box: number[] } | null }; tiles: { list: Tile[] }; tokens: { stoneOf: (id: string) => { n: number; dPx: number; capPx: number; figWPx: number; figHPx: number }; dminPx: number; sizeScale: number } } } }).__board.__debug;
         const cam = d.rig.homeCamera();
         const cr = d.canvas.getBoundingClientRect();
         const t0 = d.tiles.list[0];
@@ -499,8 +517,9 @@ if (run('7')) {
         const land: string[] = [];
         const floored: string[] = [];
         const dmin = d.tokens.dminPx * d.tokens.sizeScale;
-        // (the table flow's rules, v3 icons: a piece = its stone and figure (pieceRects().fig); its numeral
-        // sits at the stone's edge. Overlaps over 2 px² count.)
+        // (the table flow's rules, v6-board: a count may lie over a neighbour's stone rim, so the covering part is
+        // the figure (stoneOf().figW/H at the top of pieceRects().fig); on phones a count may lie over a
+        // neighbour's figure too (the crowded rule), so only counts on counts count there. Overlaps over 2 px².)
         const ov = (a: number[], b: number[]) => {
           const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
           const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
@@ -508,16 +527,23 @@ if (run('7')) {
         };
         const numBox = new Map([...nums].map(([k, r]) => [k, [r.left, r.top, r.right, r.bottom]]));
         const piece = new Map<string, number[]>();
+        const figure = new Map<string, number[]>();
         for (const t of d.tiles.list) {
           const pr = d.overlay.pieceRects(t.id) as { fig: number[] } | null;
-          if (pr) piece.set(t.id, [pr.fig[0] + cr.left, pr.fig[1] + cr.top, pr.fig[2] + cr.left, pr.fig[3] + cr.top]);
+          if (!pr) continue;
+          const u = [pr.fig[0] + cr.left, pr.fig[1] + cr.top, pr.fig[2] + cr.left, pr.fig[3] + cr.top];
+          piece.set(t.id, u);
+          const st = d.tokens.stoneOf(t.id);
+          const cx = (u[0] + u[2]) / 2;
+          if (st.figWPx > 0) figure.set(t.id, [cx - st.figWPx / 2, u[1], cx + st.figWPx / 2, u[1] + st.figHPx]);
         }
-        for (const [id, a] of piece)
-          for (const [o, b] of numBox) {
-            if (o === id) continue;
-            const x = ov(a, b);
-            if (x) over.push(`${id}'s piece over ${o}'s numeral (${x})`);
-          }
+        if (!compact)
+          for (const [id, a] of figure)
+            for (const [o, b] of numBox) {
+              if (o === id) continue;
+              const x = ov(a, b);
+              if (x) over.push(`${id}'s figure over ${o}'s numeral (${x})`);
+            }
         for (const [id, a] of numBox)
           for (const [o, b] of numBox) {
             if (o <= id) continue;
@@ -555,7 +581,7 @@ if (run('7')) {
           if (hit) land.push(`${t.id}'s stone over ${hit}'s land${isFloor ? ' (at the 1-army floor)' : ''}`);
         }
         return { over, land, floored, tangled: (d as unknown as { capsTangled: string[] }).capsTangled ?? [] };
-      });
+      }, form !== '1440x900');
       numerals.push(...r.over);
       tangled.push(...r.tangled);
       land.push(...r.land);
@@ -570,13 +596,13 @@ if (run('7')) {
     };
     // An overlap between a pair the renderer reports as tangled at the floor is the pack's density at this size
     // (reported, a Maps / Board matter); any other overlap means the cap fit misjudged a part: that fails.
-    const pairOf = (x: string) => (/^(\w+)'s (?:piece over|numeral on) (\w+)'s/.exec(x) ?? []).slice(1, 3).sort().join('/');
+    const pairOf = (x: string) => (/^(\w+)'s (?:figure over|numeral on) (\w+)'s/.exec(x) ?? []).slice(1, 3).sort().join('/');
     const known = new Set(tangled.map((p) => p.split('/').sort().join('/')));
     const admitted = [...new Set(numerals.filter((x) => known.has(pairOf(x))))];
     const rest = numerals.filter((x) => !known.has(pairOf(x)));
     const slivers = [...new Set(rest.filter((x) => area(x) <= 4))];
     const bad = rest.filter((x) => area(x) > 4);
-    check(bad.length === 0, `True World ${form}: no piece (stone + figure) or numeral covers another territory's numeral, outside the pairs the cap fit reports tangled${bad.length ? ` — ${bad.slice(0, 5).join('; ')}` : ''}`, results);
+    check(bad.length === 0, `True World ${form}: no figure or numeral covers another territory's numeral (a count over a stone rim is allowed, v6), outside the pairs the cap fit reports tangled${bad.length ? ` — ${bad.slice(0, 5).join('; ')}` : ''}`, results);
     if (admitted.length) console.log(`   NOTE True World ${form}: tangled at the 1-army floor (the renderer says so; anchors too close at this size): ${[...known].join(', ')} — ${admitted.join('; ')}`);
     if (slivers.length) console.log(`   NOTE True World ${form}: slivers (≤ 4 px²): ${slivers.join('; ')}`);
     // v4 (decision Q9): a strong stone may cross a neighbour's border; covering a numeral is the gate (table flow). Reported, not gated.

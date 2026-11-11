@@ -117,13 +117,17 @@ const ov = (await page.evaluate(() => {
 check(ov.frames > 20 && ov.max <= 1, `the line never shows two sentences (max ${ov.max} over ${ov.frames} frames)`, results);
 check((await state(page))!.phase.kind === 'attack', 'a past segment (Place) is inert', results);
 
-// --- Conquest: 'Siberia captured', then the header clears; occupy locks the track ---------------------
+// --- Conquest: 'Siberia captured · cost N', then the header clears; occupy locks the track ---------------------
+const uralBefore = (await state(page))!.territories.ural.armies;
 await clickBtn(page, 'btn-blitz');
 await idle(page);
 let st = (await state(page))!;
 if (st.phase.kind === 'occupy' || st.territories.siberia.owner === 0) {
   const b = (await ui(page)).battle;
-  check(b?.header === 'Siberia captured', `the tray header after the conquest: ${b?.header}`, results);
+  // v6 (A2 10): the capture says what it cost (the attacker's losses), when it cost anything.
+  const cost = st.phase.kind === 'occupy' ? uralBefore - st.territories.ural.armies : -1;
+  const want = cost > 0 ? `Siberia captured · cost ${cost}` : 'Siberia captured';
+  check(cost < 0 ? /^Siberia captured( · cost \d+)?$/.test(b?.header ?? '') : b?.header === want, `the tray header after the conquest: ${b?.header} (lost ${cost})`, results);
   if (st.phase.kind === 'occupy') {
     d = await dom(page);
     check((await ui(page)).trackDisabled && d.states.join(',') === 'done,current,locked,locked', `occupy: the track is disabled (${d.states.join(' ')})`, results);

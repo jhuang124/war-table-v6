@@ -51,7 +51,8 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
     if (txt !== String(n)) bad.push(`${t}: numeral "${txt}" for ${n}`);
   }
   check(bad.length === 0, `10 stones sized by their counts (area-linear, capped), each with its figure standing on it (soldier / rider / cannon, 1.1 × the stone), numerals match (${bad.join('; ') || pick.join(', ')})`, results);
-  // the numeral sits at the stone's lower-right edge, off the figure
+  // v6-board: the count is the hero mark, set beside the figure on the stone's right, level with its feet (lower
+  // half of the piece), and no longer hanging below the stone
   const edge = await page.evaluate((d) => {
     const o = (eval(d) as { overlay: { pieceRects: (id: string) => { plaque: number[]; fig: number[] } | null } }).overlay;
     const out: string[] = [];
@@ -62,13 +63,13 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
       const [fx0, fy0, fx1, fy1] = r.fig;
       const cx = (fx0 + fx1) / 2;
       const nc = [(nx0 + nx1) / 2, (ny0 + ny1) / 2];
-      if (!(nc[0] > cx && ny1 > fy1 - 2 && ny0 > fy0)) out.push(`${id}: numeral ${r.plaque.map(Math.round)} vs piece ${r.fig.map(Math.round)}`);
+      if (!(nx0 >= cx && nc[1] > (fy0 + fy1) / 2 && ny1 <= fy1 + 2 && ny0 > fy0)) out.push(`${id}: numeral ${r.plaque.map(Math.round)} vs piece ${r.fig.map(Math.round)}`);
       const fs = parseFloat(getComputedStyle(document.querySelector(`.rb-badge[data-t="${id}"]`)!).fontSize);
       if (fs < 11) out.push(`${id}: numeral ${fs} px`);
     }
     return out;
   }, dbg);
-  check(edge.length === 0, `the numeral sits at the stone's lower-right edge, ≥ 11 px (Ural 19, China 5, Peru 1, India 25)${edge.length ? ` — ${edge.join('; ')}` : ''}`, results);
+  check(edge.length === 0, `the numeral sits beside the figure on the stone's right, level with its feet, not below the stone, ≥ 11 px (Ural 19, China 5, Peru 1, India 25)${edge.length ? ` — ${edge.join('; ')}` : ''}`, results);
   // larger means more, to the cap; the numeral carries the rest
   const h = await Promise.all(['peru', 'china', 'ukraine', 'ural'].map(stoneOf));
   check(h[0].dPx < h[1].dPx && h[1].dPx < h[2].dPx && h[2].dPx <= h[3].dPx, `larger means more: 1 → 5 → 6 → 19 armies are ${h.map((x) => x.dPx.toFixed(1)).join(' · ')} px across`, results);
@@ -191,17 +192,21 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
 
 await browser.close();
 
-// --- 4. a piece (stone + figure) never covers another territory's numeral or figure, at home, on all three form factors
+// --- 4. a figure or numeral never covers another territory's numeral or figure, at home, on all three form factors
 {
   /**
-   * Every overlap over 2 px², at the home view, of a piece's stone-and-figure box or its numeral with another
-   * territory's numeral or figure (a stone's own disc against a neighbour's is the land rule's: stones stay on
-   * their own land). A figure's box is its sprite's quad above the stone.
+   * Every overlap over 2 px², at the home view, of a piece's figure or its numeral with another territory's
+   * numeral or figure (a stone's own disc against a neighbour's is the land rule's: stones stay on their own land).
+   * v6-board (tokens.piecesClash): a count may lie over the rim of a neighbour's STONE (its ink pool keeps it
+   * legible, and counts keep one side), so the stone is no longer part of the covering box: the figure is (its
+   * sprite's quad, stoneOf().figW/H, standing at the top of pieceRects().fig). On phones a count may also lie over
+   * a neighbour's figure (the renderer's crowded rule; the count is DOM, drawn over the board): there only a count
+   * on a count, or a figure on a figure, fails.
    */
-  const overlaps = (p: Page) =>
-    p.evaluate(() => {
+  const overlaps = (p: Page, compact: boolean) =>
+    p.evaluate((compact) => {
       type PR = { box: number[]; plaque: number[]; fig: number[] };
-      const d = (window as unknown as { __board: { __debug: { overlay: { pieceRects: (id: string) => PR | null }; tiles: { list: { id: string }[] }; capsFloored: number; capsLowered: number; capsFigSmaller: number; capsTangled: string[]; capsBig: string; capsLost: string[] } } }).__board.__debug;
+      const d = (window as unknown as { __board: { __debug: { overlay: { pieceRects: (id: string) => PR | null }; tokens: { stoneOf: (id: string) => { figWPx: number; figHPx: number } }; tiles: { list: { id: string }[] }; capsFloored: number; capsLowered: number; capsFigSmaller: number; capsTangled: string[]; capsBig: string; capsLost: string[] } } }).__board.__debug;
       // the board's three largest stacks keep their size: against them only the numerals must stay clear
       const big = new Set(d.capsBig.split(','));
       const out: string[] = [];
@@ -213,36 +218,44 @@ await browser.close();
         nums.set(b.dataset.t!, [r.left, r.top, r.right, r.bottom]);
       });
       const piece = new Map<string, number[]>();
+      const figure = new Map<string, number[]>();
       for (const t of d.tiles.list) {
         const r = d.overlay.pieceRects(t.id);
-        if (r) piece.set(t.id, [r.fig[0] + cr.left, r.fig[1] + cr.top, r.fig[2] + cr.left, r.fig[3] + cr.top]);
+        if (!r) continue;
+        const u = [r.fig[0] + cr.left, r.fig[1] + cr.top, r.fig[2] + cr.left, r.fig[3] + cr.top];
+        piece.set(t.id, u);
+        const st = d.tokens.stoneOf(t.id);
+        const cx = (u[0] + u[2]) / 2;
+        if (st.figWPx > 0) figure.set(t.id, [cx - st.figWPx / 2, u[1], cx + st.figWPx / 2, u[1] + st.figHPx]);
       }
       const over = (a: number[], b: number[]) => {
         const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
         const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
         return w > 0 && h > 0 && w * h > 2 ? `${Math.round(w)}×${Math.round(h)}` : '';
       };
-      for (const [id, a] of piece)
-        for (const [o, b] of [...nums].filter(([k]) => k !== id)) {
-          const x = over(a, b);
-          if (x) out.push(`${id}'s piece over ${o}'s numeral (${x})`);
-        }
+      if (!compact)
+        for (const [id, a] of figure)
+          for (const [o, b] of [...nums].filter(([k]) => k !== id)) {
+            const x = over(a, b);
+            if (x) out.push(`${id}'s figure over ${o}'s numeral (${x})`);
+          }
       for (const [id, a] of nums)
         for (const [o, b] of [...nums].filter(([k]) => k > id)) {
           const x = over(a, b);
           if (x) out.push(`${id}'s numeral on ${o}'s (${x})`);
         }
-      // a figure against another piece: the part of the box above its stone (the stone is square, the figure rises)
+      // a figure against another figure (v6-board: a figure may stand over a neighbour's stone, never its figure):
+      // the part of the box above its stone (the stone is square, the figure rises) against the other's figure
       for (const [id, a] of piece) {
         const up = [a[0], a[1], a[2], a[1] + Math.max(0, a[3] - a[1] - (a[2] - a[0]))];
         if (up[3] - up[1] < 1) continue;
-        for (const [o, b] of [...piece].filter(([k]) => k !== id && big.has(k) === big.has(id))) {
+        for (const [o, b] of [...figure].filter(([k]) => k !== id && big.has(k) === big.has(id))) {
           const x = over(up, b);
-          if (x) out.push(`${id}'s figure over ${o}'s piece (${x})`);
+          if (x) out.push(`${id}'s figure over ${o}'s figure (${x})`);
         }
       }
       return { out, floored: d.capsFloored, lowered: d.capsLowered, smaller: d.capsFigSmaller, tangled: d.capsTangled, big: d.capsBig, lost: d.capsLost };
-    });
+    }, compact);
   const tall = scenario({}, { kind: 'attack' }, { fill: (_t, i) => [1 + (i % 3), 30] });
   const mixed = scenario({}, { kind: 'attack' }, { fill: (_t, i) => [1 + (i % 3), i % 2 ? 1 : 40] });
   for (const form of ['1440x900', 'iphone', 'iphone-land'] as const) {
@@ -256,7 +269,7 @@ await browser.close();
     for (const s of [tall, mixed, restBoard({ kind: 'attack' })]) {
       await loadScenario(ctx.page, s);
       await ctx.page.waitForTimeout(300);
-      const r = await overlaps(ctx.page);
+      const r = await overlaps(ctx.page, form !== '1440x900');
       // v4: the cap fitter's own 1 px standard may still report a pair on landscape phones while no DOM piece overlaps; the DOM list is the gate
       bad.push(...r.out, ...(form === 'iphone-land' ? [] : r.tangled.map((x) => `caps left ${x} tangled`)));
       floored = r.floored;
@@ -306,7 +319,7 @@ await browser.close();
       digits.push(`${id} "${r.t}" ${r.fs} → ${h.toFixed(1)} px`);
     }
     check(digits.length >= 3 && minDigit >= want - 0.01, `${form}: every count's digit is drawn ≥ ${want} px tall (lining figures; ${digits.join(', ')})`, results);
-    check(bad.length === 0, `${form}: no piece (stone + figure) or numeral covers another territory's numeral or figure at home (every stone at 30, at 1/40, and the round-6 board; ${lowered} stones held under full size to clear a neighbour, ${floored} of them at the 1-army size, ${smaller} figures drawn under 1.1 × their stone; the three largest kept their size: ${bigs.join(' / ')})${bad.length ? ` — ${bad.slice(0, 6).join('; ')}` : ''}`, results);
+    check(bad.length === 0, `${form}: no figure or numeral covers another territory's numeral or figure at home (a count over a neighbour's stone rim is allowed, v6; every stone at 30, at 1/40, and the round-6 board; ${lowered} stones held under full size to clear a neighbour, ${floored} of them at the 1-army size, ${smaller} figures drawn under 1.1 × their stone; the three largest kept their size: ${bigs.join(' / ')})${bad.length ? ` — ${bad.slice(0, 6).join('; ')}` : ''}`, results);
     errors.push(...ctx.errors);
     await ctx.browser.close();
   }

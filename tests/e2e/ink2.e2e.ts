@@ -4,7 +4,8 @@
 //       (v5.1: the hand-off cover is gone; New game's and Settings' More folds are scanned open), on desktop 1440×900, iPhone portrait and iPhone landscape: no visible element (or
 //       its ::before / ::after) with border-radius > 0 that also has a non-transparent background or a
 //       border. SVG is ink (the brush rings, underlines, the ensō), not a box, and is skipped; the gold
-//       rule's signature (.st-rule, .lk-rule, .ra-rule) is skipped as the one-gold sampler skips it.
+//       rule's signature (.st-rule, .lk-rule, .ra-rule) is skipped as the one-gold sampler skips it, and so is
+//       an On switch's solid knob dot (v6: a circle inside the brush ring, not a box).
 //   (b) Mid-roll on iPhone landscape (one real roll, realtime): every count ring still on the board reads
 //       (effective opacity ≥ 0.6) and the fighting pair's washes are at dim 0 while the rest recede.
 //   (c) After a Turn Track advance the ensō sits on the rule over the current word: its centre x equals
@@ -63,6 +64,8 @@ async function roundedBoxes(page: Page): Promise<string[]> {
       for (const pseudo of ['::before', '::after']) {
         const cs = getComputedStyle(el, pseudo);
         if (!cs.content || cs.content === 'none' || cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+        // v6: a switch that is On inks its knob solid (a dot inside the brush ring), a mark, not a box.
+        if (pseudo === '::after' && el.matches('.switch-knob') && parseFloat(cs.width) === parseFloat(cs.height) && cs.borderRadius === '50%') continue;
         const p = boxy(cs);
         if (p) out.push(`${name(el)}${pseudo} ${p}`);
       }

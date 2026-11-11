@@ -123,12 +123,18 @@ check(!!sw && sw.active === 'activated' && sw.scope === ROOT && sw.script === RO
 // Wait for the precache to fill, and for the page to be controlled.
 await page.reload();
 await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 10000 });
-const cached = await page.evaluate(async () => {
+// v6: the cache is named by its scope path ('war-table:/war-table/:<version>'), so versions sharing an origin never
+// delete each other's offline copy.
+const scopeKey = `war-table:${new URL(ROOT).pathname}:`;
+const cached = await page.evaluate(async (pre) => {
   const keys = await caches.keys();
-  const c = await caches.open(keys.find((k) => k.startsWith('war-table-'))!);
+  const name = keys.find((k) => k.startsWith(pre));
+  if (!name) return { keys, n: 0 };
+  const c = await caches.open(name);
   return { keys, n: (await c.keys()).length };
-});
-check(cached.keys.some((k) => /^war-table-[0-9a-f]{12}$/.test(k)) && cached.n >= 15, `versioned cache ${cached.keys.join(',')} holds ${cached.n} files`, results);
+}, scopeKey);
+const vre = new RegExp(`^${scopeKey.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}[0-9a-f]{12}$`);
+check(cached.keys.some((k) => vre.test(k)) && cached.n >= 15, `versioned cache ${cached.keys.join(',')} holds ${cached.n} files`, results);
 
 // Offline reload
 await context.setOffline(true);
