@@ -37,7 +37,7 @@ export const FLOWS: Record<string, FlowSpec> = {
   round: { lane: 'timing', why: 'AI turn median ≤ 6 s and p95 ≤ 12 s at watch, a round of 3 AI turns ≤ 25 s, Start → first click ≤ 20 s' },
   game: {
     lane: 'timing',
-    why: 'AI turn median/p95 at watch, single roll ≤ 1.26 s (measured 1.26 s), blitz ≤ 3.25 s, brief ≤ 0.86 s, camera ≤ 45°/s, Start → first click ≤ 20 s',
+    why: 'AI turn median ≤ 6 s / p95 ≤ 12 s at watch, single roll ≤ 1.25 s, blitz ≤ 3.0 s, readable AI engagement ≤ 1.4 s, camera ≤ 45°/s, Start → first click ≤ 20 s',
   },
 
   // --- logic, real speed (parallel) ----------------------------------------------------------------------

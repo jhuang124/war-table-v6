@@ -69,10 +69,11 @@ await page.waitForTimeout(1800);
 const vic = await page.evaluate(() => {
   const el = document.querySelector('[data-testid="victory"]');
   const text = el ? (el.textContent ?? '') : document.getElementById('ui')?.innerText ?? '';
-  const m = text.match(/[A-Za-z' ]+ holds the world/);
+  // v6: "holds the world" only at 42 of 42; a 70 % win reads "<Name> wins" with "N of 42 territories"
+  const m = text.match(/[A-Z][A-Za-z']* wins(?=Round \d+ · \d+ of 42 territories)/);
   return m ? m[0] : text.slice(0, 200);
 });
-check(/ holds the world/.test(vic), `victory screen: ${vic.trim()}`, results);
+check(/^[A-Z][A-Za-z']* wins$/.test(vic.trim()), `victory screen: ${vic.trim()}`, results);
 await page.screenshot({ path: `artifacts/e2e/autoplay-victory${query.includes('debughud') ? '' : '-ui'}.png` });
 await browser.close();
 finish(results, errors);

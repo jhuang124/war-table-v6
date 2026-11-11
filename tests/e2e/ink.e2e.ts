@@ -8,8 +8,8 @@
 //      that arms nothing while it's drawn; release over an adjacent enemy arms it exactly like a tap
 //      (the odds line, Roll / Blitz) and rolls nothing; release elsewhere cancels; a drag from anywhere
 //      else pans (touch) and never draws.
-//   3. The tempo budgets (A6), from __risk.metrics(): a single roll ≤ 1.25 s including the 250 ms
-//      verdict silence, a blitz ≤ 3.0 s, forced wait on your own turn 0. (The AI turn median and the
+//   3. The tempo budgets (A6), from __risk.metrics(): a single roll ≤ 1.25 s including the verdict (v6:
+//      an 80 ms hush before the last die, no silence after it), a blitz ≤ 3.0 s, forced wait on your own turn 0. (The AI turn median and the
 //      brief AI-vs-AI engagement are measured over a long game in game.e2e.ts, at the same limits.)
 import { check, clickBtn, clickT, finish, idle, loadScenario, open, scenario, seg, state, ui } from './lib';
 import { openDevice, tapId } from './mobile-lib';
@@ -209,7 +209,7 @@ const boardDbg = (page: Page) =>
   const singles = m.rolls.filter((r) => r.style === 'full' && !r.blitz && r.count === 1).map((r) => r.ms);
   const blitzes = m.rolls.filter((r) => r.style === 'full' && r.blitz).map((r) => r.ms);
   const human = m.turns.filter((t) => t.kind === 'human');
-  check(singles.length > 0 && Math.max(...singles) <= 1250, `single roll ≤ 1.25 s incl. the 250 ms silence (${singles.join(', ')} ms)`, results);
+  check(singles.length > 0 && Math.max(...singles) <= 1250, `single roll ≤ 1.25 s incl. the verdict (${singles.join(', ')} ms)`, results);
   check(blitzes.length > 0 && Math.max(...blitzes) <= 3000, `blitz ≤ 3.0 s (${blitzes.join(', ')} ms)`, results);
   check(human.length > 0 && human.every((t) => t.forcedWaitMs === 0), `forced wait on your own turn: ${human.map((t) => t.forcedWaitMs).join(', ')} ms`, results);
   allErrors.push(...errors);

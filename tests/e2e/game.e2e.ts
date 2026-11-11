@@ -292,8 +292,8 @@ const blitz = m.rolls.filter((r) => r.blitz && r.style === 'full').map((r) => r.
 const brief = m.rolls.filter((r) => r.style === 'readable' || r.style === 'brief').map((r) => r.ms);
 console.log(`   rolls: single ${full1.join(',')} · blitz ${blitz.join(',')} · readable max ${Math.max(0, ...brief)} (${brief.length})`);
 // INK A6's budgets, exactly (metrics are wall-clock from dispatch to the last promise). The single roll
-// includes the 250 ms verdict silence; the blitz's middle rolls share its budget against the real clock.
-check(full1.length > 0 && Math.max(...full1) <= 1250, `single roll ≤ 1.25 s incl. the silence (max ${Math.max(0, ...full1)} ms)`, results);
+// includes the verdict (v6: an 80 ms hush before the last die, no silence after it); the blitz's middle rolls share its budget against the real clock.
+check(full1.length > 0 && Math.max(...full1) <= 1250, `single roll ≤ 1.25 s incl. the verdict (max ${Math.max(0, ...full1)} ms)`, results);
 check(blitz.length > 0 && Math.max(...blitz) <= 3000, `blitz ≤ 3.0 s (max ${Math.max(0, ...blitz)} ms over ${blitz.length})`, results);
 check(brief.length > 0 && Math.max(...brief) <= 1400, `readable AI engagement ≤ 1.4 s at 1× (max ${Math.max(0, ...brief)} ms over ${brief.length})`, results);
 check(m.cameraMovesDuringHumanInput === 0, `cameraMovesDuringHumanInput ${m.cameraMovesDuringHumanInput}`, results);

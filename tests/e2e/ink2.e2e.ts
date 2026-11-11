@@ -265,7 +265,7 @@ if (!ONLY || ONLY.includes('roll')) {
   await tapT(page, 'north_africa');
   await page.waitForFunction(() => window.__risk.ui().buttons.includes('Roll'), null, { timeout: 4000 });
   await tapId(page, 'btn-roll');
-  // single roll at 1×: shake 120 · tumble 450 · settle 100 → the silence runs 670–920 ms
+  // single roll at 1×: shake 120 · tumble 450 · settle 100 → mid-roll / the verdict lands around 670–920 ms
   await page.waitForTimeout(790);
   const mid = await page.evaluate(() => {
     const dbg = (window.__board as unknown as { __debug: { tray: { visible: boolean }; tiles: { list: { id: string; dim: number }[] } } }).__debug;
