@@ -1736,7 +1736,7 @@ class Controller {
     // conquest never rolls it).
     if (this.autoArmed && !this.autoArmed.shown) {
       this.autoArmed.shown = true;
-      this.autoArmed.at = this.now();
+      if (this.autoArmed.at !== -Infinity) this.autoArmed.at = this.now();
     }
     const pending = this.pendingInputs;
     this.pendingInputs = [];
@@ -2943,6 +2943,9 @@ class Controller {
       return;
     }
     const before = this.selKey();
+    // v6: a board click is a deliberate choice: whatever it leaves armed is the player's, so the armed-for-you
+    // guard (a double click on Move landing on Blitz) no longer applies to the next Roll / Blitz.
+    if (this.autoArmed) this.autoArmed.at = -Infinity;
     this.handleClick(info);
     if (this.selKey() !== before) {
       this.haptics.play('select');
