@@ -793,6 +793,8 @@ export class BottomStrip {
   private countWord: HTMLButtonElement;
   /** The collapsed count was opened, for this count (its control and range). */
   private countOpenKey = '';
+  /** The count that showed folded (its key): it stays the stepper once touched, until its number is clicked. */
+  private foldedKey = '';
   private zone: HTMLDivElement;
   private seat = new SeatMark();
   private hold = new Holding();
@@ -831,7 +833,7 @@ export class BottomStrip {
     this.count.append(this.countWord, this.stepper.el, this.slider.el);
     this.stepper.el.querySelector('.sp-n')?.addEventListener('click', () => {
       const c = this.vm?.count;
-      if (!c?.collapsed || c.control !== 'slider' || layout.form === 'phone' || this.countOpenKey === countKey(c)) return;
+      if (!c || !(c.collapsed || this.foldedKey === countKey(c)) || c.control !== 'slider' || layout.form === 'phone' || this.countOpenKey === countKey(c)) return;
       this.countOpenKey = countKey(c);
       this.paintCount(c, true);
     });
@@ -953,7 +955,10 @@ export class BottomStrip {
     this.cardsOpen = !!cards?.open;
     const n = cards?.hand.length ?? 0;
     const own = !!this.vm?.buttons.some((b) => b.id === 'cards');
-    const on = !!cards && live && n > 0 && !own;
+    // (phones: the word steps aside while a count is in the action row; with the dab, the stepper, Undo and the
+    // primary, a landscape row has no room left and the primary was pushed off the screen)
+    const crowded = this.cardsWord.parentElement === this.zone && !!this.vm?.count;
+    const on = !!cards && live && n > 0 && !own && !crowded;
     toggle(this.cardsWord, 'hidden', !on);
     if (on) setText(this.cardsWord.querySelector('.btn-label')!, `Cards ${n}`);
     if (this.vm) toggle(this.zone, 'is-empty', !this.vm.count && this.vm.buttons.length === 0 && !this.ask && !this.holdsInZone() && !(on && this.cardsWord.parentElement === this.zone));
@@ -1015,8 +1020,11 @@ export class BottomStrip {
    * never get the hairline slider (about 6 px a step under a thumb): − N + with hold-to-repeat, whatever the range.
    */
   private paintCount(c: CountVM | null, opened = false): void {
-    const folded = !!c?.collapsed && this.countOpenKey !== countKey(c);
-    if (!c) this.countOpenKey = '';
+    // (a folded count stays folded after a − / + press: the controller stops marking it collapsed once touched,
+    // but the stepper under the pointer must not turn into the slider mid-adjustment)
+    if (c?.collapsed && this.countOpenKey !== countKey(c)) this.foldedKey = countKey(c);
+    const folded = !!c && this.countOpenKey !== countKey(c) && (!!c.collapsed || this.foldedKey === countKey(c));
+    if (!c) this.countOpenKey = this.foldedKey = '';
     const thumb = layout.form === 'phone';
     const ctl: CountVM['control'] | null = !c ? null : thumb || folded ? 'stepper' : c.control;
     toggle(this.count, 'hidden', !c);
