@@ -51,9 +51,14 @@ await page.keyboard.press('Escape');
 await settle(40);
 u = await ui(page);
 check(u.line === 'Click an enemy territory to attack', `Esc 2 → nothing picked: ${u.line}`, results);
+// v6 (A2 11): Esc cancels first; one mashed right after a cancel (< 600 ms) is spent, never the menu; a later one is
+await page.keyboard.press('Escape');
+await settle(40);
+check((await page.locator('[data-testid="pause"]').count()) === 0, 'Esc 3 right after the cancel → nothing (no menu on a mashed key)', results);
+await page.waitForTimeout(650);
 await page.keyboard.press('Escape');
 await settle();
-check((await page.locator('[data-testid="pause"]').count()) === 1, 'Esc 3 → the menu', results);
+check((await page.locator('[data-testid="pause"]').count()) === 1, 'Esc 4, after a beat → the menu', results);
 await page.keyboard.press('Escape');
 await settle();
 check((await page.locator('[data-testid="pause"]').count()) === 0, 'Esc closes the menu', results);

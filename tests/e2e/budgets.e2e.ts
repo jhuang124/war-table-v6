@@ -4,7 +4,8 @@
 //   click no longer leaves Place) · attack + conquer from nothing = 2 (+1 Move when there's an occupy
 //   step; a board click no longer confirms it) · skip fortify = 1 · End turn from Attack = 1 (skips
 //   Fortify) · a typical full turn (place, 3 conquests with occupy, end) = 13 (was 10 / ≤ 12: +1 for the
-//   Attack segment, +2 for the Move buttons that replaced the chaining board clicks).
+//   Attack segment, +2 for the Move buttons that replaced the chaining board clicks). v6: after a Move the next
+//   good attack may already be armed, so a chained conquest is Blitz alone: the typical turn is 11–13.
 // Also: a 2-way split ≤ 5, rapid stepper presses and a 2-way split never drop input.
 import { check, clickBtn, clickT, finish, idle, loadScenario, open, place, rendered, scenario, seg, setCount, state, ui } from './lib';
 import type { Phase } from '../../src/engine';
@@ -43,21 +44,30 @@ const reinforce = (remaining: number): Phase => ({ kind: 'reinforce', remaining,
   s = await state(page);
   check(s!.phase.kind === 'occupy' && s!.territories.siberia.owner === 0, 'Siberia taken, occupy step up', results);
   u = await ui(page);
-  check(u.line === 'Move into Siberia' && /^Move \d+$/.test(u.primary ?? '') && u.trackDisabled, `occupy: "${u.line}" · ${u.primary} · track disabled`, results);
+  // v6: the occupy line says what stays behind
+  check(u.line === `Move into Siberia · Ural keeps ${s!.territories.ural.armies - (u.count?.value ?? 0)}` && /^Move \d+$/.test(u.primary ?? '') && u.trackDisabled, `occupy: "${u.line}" · ${u.primary} · track disabled`, results);
   // A board click during occupy is refused (it no longer confirms the move).
   await clickT(page, 'yakutsk');
   await page.waitForTimeout(60);
   u = await ui(page);
   s = await state(page);
   check(s!.phase.kind === 'occupy' && u.line === 'Finish moving armies into Siberia first', `board click in occupy refused: "${u.line}"`, results);
-  // Move (1): the conquered tile is the source if it can keep attacking.
+  // Move (1): the conquered tile is the source if it can keep attacking; v6 (A2 12): with the next good attack from
+  // it armed when there is one (never rolled), so the next conquest can cost one click (Blitz) instead of two.
   await clickBtn(page, 'btn-move');
   occupies++;
   await idle(page);
   u = await ui(page);
-  check(u.line === 'Attack from Siberia · click an enemy', `after Move, Siberia is the source: ${u.line}`, results);
-  // Conquest 2: target + Blitz (+ Move).
-  await clickT(page, 'yakutsk');
+  check(u.line === 'Attack from Siberia · click an enemy' || /^Siberia → \w+/.test(u.line), `after Move, Siberia is the source (or its next attack armed): ${u.line}`, results);
+  /** Arm `from → to` unless it is already armed; returns the clicks it took (0 or 1). */
+  const arm = async (from: string, to: string): Promise<number> => {
+    if (new RegExp(`^${from} → ${to} · `).test((await ui(page)).line)) return 0;
+    await clickT(page, to.toLowerCase());
+    return 1;
+  };
+  let armClicks = 0;
+  // Conquest 2: (target) + Blitz (+ Move).
+  armClicks += await arm('Siberia', 'Yakutsk');
   u = await ui(page);
   check(/^Siberia → Yakutsk/.test(u.line), `chained: ${u.line}`, results);
   await clickBtn(page, 'btn-blitz');
@@ -68,7 +78,7 @@ const reinforce = (remaining: number): Phase => ({ kind: 'reinforce', remaining,
     await idle(page);
   }
   // Conquest 3.
-  await clickT(page, 'kamchatka');
+  armClicks += await arm('Yakutsk', 'Kamchatka');
   await clickBtn(page, 'btn-blitz');
   await idle(page);
   s = await state(page);
@@ -84,11 +94,11 @@ const reinforce = (remaining: number): Phase => ({ kind: 'reinforce', remaining,
   await seg(page, 'endTurn');
   await page.waitForFunction(() => window.__risk.metrics().turns.length > 0);
   const t = (await clicks())[0];
-  const want = 2 + 1 + 3 * 2 + occupies + 1;
+  const want = 2 + 1 + 2 + armClicks + 2 + occupies + 1;
   // The two refused probe clicks above are counted (and rejected); the turn's own budget excludes them.
   const own = t.clicks - t.rejected;
   check(t.kind === 'human' && own <= 13 && t.rejected === 2, `typical turn = ${own} clicks (budget ≤ 13) + ${t.rejected} refused probes, forced wait ${t.forcedWaitMs} ms`, results);
-  check(own === want, `exactly 2 + Attack + 3 × 2 + ${occupies} Move + End turn = ${want} (${own})`, results);
+  check(own === want, `exactly 2 + Attack + 2 + ${armClicks} re-arm + 2 Blitz + ${occupies} Move + End turn = ${want} (${own})`, results);
   check(t.forcedWaitMs === 0, 'forced wait 0 on your own turn', results);
   await page.screenshot({ path: 'artifacts/e2e/budget-turn-end.png' });
   await browser.close();

@@ -5,12 +5,13 @@
 //   B  no cup element anywhere on the game screen.
 //   E3 Settings: four primary controls and a More fold for the rest; no 'Hide cards between turns'.
 //   E1 Place → Attack advances by itself after the last army.
-//   E2 occupy: all but one by default (Move N), the count collapsed to its number until touched.
-//   C  standing: a mark on every AI ring with its __risk.standing() value; a hover writes the reason in the
-//      line; a tap offers "Ask X for peace", Ask is answered at once; an AI–AI understanding reaches the
+//   E2 occupy: the AI's move-in by default (Move N, v6), folded to the stepper until its number is clicked.
+//   C  standing: a mark on every AI ring with its __risk.standing() value; a hover opens the seat card with
+//      the reason (v6: not the line); a tap offers "Ask X for peace", Ask is answered at once; an AI–AI understanding reaches the
 //      Ledger ("X and Y have an understanding" / "X turned on Y") in an all-AI autoplay game.
 import { check, clearStorage, clickBtn, finish, idle, loadScenario, open, place, scenario, seg, state, ui, ONE_HUMAN } from './lib';
 import type { Page } from 'playwright';
+import { chooseAiAction } from '../../src/engine';
 
 const results: string[] = [];
 const { browser, page, errors } = await open();
@@ -102,21 +103,29 @@ check(cover === 0 && (await page.locator('[data-testid="handoff"]').count()) ===
 check(/^Sam's turn · \d+ arm(y|ies)$/.test(passed.bannerLine ?? ''), `the turn line names Sam: "${passed.bannerLine}"`, results);
 await idle(page);
 
-// --- E2 · occupy: all but one, collapsed until touched ---------------------------------------------------
-await loadScenario(page, scenario({ greenland: [0, 10], ontario: [0, 0] }, { kind: 'occupy', from: 'greenland', to: 'ontario', min: 3, max: 9, previousOwner: 1 }));
+// --- E2 · occupy: decided for you, folded until touched -------------------------------------------------
+// v6: the default is what the AI would keep (occupyGuess: chooseAiAction for a Normal seat), not always all but
+// one; a folded count reads as the − N + stepper at that default (the `count-expand` word went), and a click on
+// its number opens the slider (desktop, a range over 6).
+const occ = scenario({ greenland: [0, 10], ontario: [0, 0] }, { kind: 'occupy', from: 'greenland', to: 'ontario', min: 3, max: 9, previousOwner: 1 });
+const guess = (() => {
+  const probe = { ...occ, players: occ.players.map((p, i) => (i === 0 ? { ...p, difficulty: 'normal' as const, personality: undefined } : p)) };
+  const a = chooseAiAction(probe as never, 0);
+  return a.type === 'occupy' ? Math.min(9, Math.max(3, a.count)) : 9;
+})();
+await loadScenario(page, occ);
 let u = await ui(page);
-const word = page.locator('[data-testid="count-expand"]');
 const folded = {
-  word: await word.isVisible(),
-  text: (await word.textContent())?.trim(),
+  word: await shown('count-expand'),
+  n: (await page.locator('[data-testid="count"]').first().textContent().catch(() => null))?.trim(),
   stepper: await shown('count-inc'),
   slider: await page.locator('[data-testid="count-slider"]').isVisible(),
 };
-check(u.primary === 'Move 9' && u.count?.value === 9 && folded.word && folded.text === '9' && !folded.stepper && !folded.slider, `occupy: ${u.primary} by default, the count collapsed to "${folded.text}" (${JSON.stringify(folded)})`, results);
-await word.click();
+check(u.primary === `Move ${guess}` && u.count?.value === guess && !folded.word && folded.n === String(guess) && folded.stepper && !folded.slider, `occupy: ${u.primary} by default (the AI's move-in ${guess}), folded to the stepper at "${folded.n}" (${JSON.stringify(folded)})`, results);
+await page.locator('[data-testid="count"]').first().click();
 await page.waitForTimeout(250);
-const opened = { word: await word.isVisible(), slider: await page.locator('[data-testid="count-slider"]').isVisible(), stepper: await shown('count-inc') };
-check(!opened.word && (opened.slider || opened.stepper), `a touch on the number opens the control (${JSON.stringify(opened)})`, results);
+const opened = { slider: await page.locator('[data-testid="count-slider"]').isVisible(), stepper: await shown('count-inc') };
+check(opened.slider && !opened.stepper, `a click on the number opens the slider (${JSON.stringify(opened)})`, results);
 
 // --- C · standing --------------------------------------------------------------------------------------
 await loadScenario(
@@ -139,10 +148,14 @@ check(
 );
 const who = rows.find((r) => r.canAskPeace) ?? rows[0];
 const box = (await page.locator(`[data-testid="seat-${who.seat}"]`).boundingBox())!;
+// v6: a hover opens the seat's card, which says the reason; the one line keeps its own words (no duplicate)
+const line0 = (await ui(page)).line;
+const reason = (who.reason ?? '').replace(/(^|[\s(])-(?=\d)/g, '$1−');
 await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-await page.waitForFunction((r) => window.__risk.ui().line === r, who.reason, { timeout: 2000 }).catch(() => undefined);
+await page.waitForFunction((r) => (document.querySelector('[data-testid="seat-card"]:not(.hidden)')?.textContent ?? '').includes(r), reason, { timeout: 2000 }).catch(() => undefined);
 u = await ui(page);
-check(!!who.reason && u.line === who.reason, `hover on ${who.name}: "${u.line}"`, results);
+const card = await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="seat-card"]:not(.hidden)')?.innerText.replace(/\s+/g, ' ') ?? '');
+check(!!who.reason && card.includes(reason) && u.line === line0, `hover on ${who.name}: its card says "${reason}", the line stays "${u.line}"`, results);
 await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 await page.mouse.move(720, 520);
 const ask = `Ask ${who.name} for peace`;
@@ -166,7 +179,9 @@ await page.evaluate(() => {
       { name: 'Emerald', color: 'emerald', kind: 'ai', difficulty: 'normal', personality: 'opportunist' },
       { name: 'Violet', color: 'violet', kind: 'ai', difficulty: 'normal', personality: 'warlord' },
     ] as never,
-    seed: 51,
+    // v6: the AI plays differently (wider personalities, scarce peace), so seed 51 now ends without one; 9 of seeds
+    // 51–65 still form an understanding, 58 by round 6
+    seed: 58,
     diplomacy: true,
   } as never);
   window.__risk.autoplay(true);

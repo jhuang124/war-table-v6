@@ -9,7 +9,7 @@
 //         player hasn't seen
 //   R1-13 the random deal never shows claim-phase copy
 //   R1-14 an Undo after a refused click restores the live line (setup); Done is on the Turn Track
-import { applyAction } from '../../src/engine';
+import { applyAction, chooseAiAction } from '../../src/engine';
 import { ART, TWO_HUMANS, check, clickBtn, clickT, finish, idle, loadScenario, open, place, scenario, seg, setCount, state, ui } from './lib';
 
 const results: string[] = [];
@@ -19,11 +19,18 @@ const shot = (name: string) => page.screenshot({ path: `${ART}/chain-${name}.png
 // --- R1-02: Greenland 10 took Ontario; click Iceland (next to Greenland, not to Ontario) -------------
 const occ = () =>
   scenario({ greenland: [0, 10], ontario: [0, 0] }, { kind: 'occupy', from: 'greenland', to: 'ontario', min: 3, max: 9, previousOwner: 1 });
+// v6 (A2 12): the move-in default is what the AI would keep (occupyGuess: chooseAiAction for a Normal seat).
+const GUESS = (() => {
+  const o = occ();
+  const probe = { ...o, players: o.players.map((p, i) => (i === 0 ? { ...p, difficulty: 'normal' as const, personality: undefined } : p)) };
+  const a = chooseAiAction(probe as never, 0);
+  return a.type === 'occupy' ? Math.min(9, Math.max(3, a.count)) : 9;
+})();
 {
   const s0 = occ();
   await loadScenario(page, s0);
   const u0 = await ui(page);
-  check(u0.line === 'Move into Ontario' && u0.primary === 'Move 9' && u0.trackDisabled, `occupy shows Move 9 (${u0.line} · ${u0.primary}), track disabled`, results);
+  check(u0.line === `Move into Ontario · Greenland keeps ${10 - GUESS}` && u0.primary === `Move ${GUESS}` && u0.trackDisabled, `occupy shows Move ${GUESS}, the AI's move-in (${u0.line} · ${u0.primary}), track disabled`, results);
   const ex = await page.evaluate(() => window.__risk.explain('iceland'));
   check(!ex.ok && ex.code === 'must_occupy_first' && ex.text === 'Finish moving armies into Ontario first', `explain(Iceland): ${ex.code} "${ex.text}"`, results);
   const pos = (await page.evaluate(() => window.__risk.screenPos('iceland')))!;
@@ -40,7 +47,7 @@ const occ = () =>
   await setCount(page, 3);
   u1 = await ui(page);
   const hasPreview = await page.evaluate(() => typeof (window.__board as unknown as { setCountPreview?: unknown }).setCountPreview === 'function');
-  check(u1.primary === 'Move 3' && (u1.line === 'Greenland 7 · Ontario 3' || (hasPreview && u1.line === 'Move into Ontario')), `count 3: "${u1.line}" · ${u1.primary}`, results);
+  check(u1.primary === 'Move 3' && (u1.line === 'Greenland 7 · Ontario 3' || (hasPreview && u1.line === 'Move into Ontario · Greenland keeps 7')), `count 3: "${u1.line}" · ${u1.primary}`, results);
   await clickBtn(page, 'btn-move');
   await idle(page);
   s1 = (await page.evaluate(() => window.__risk.getState()))!;
@@ -64,7 +71,7 @@ const occ = () =>
   await shot('r1-02-after-chain-click');
 }
 
-// --- R1-21: Enter pressed while the Move march still shows the old brass `Move 9` is spent -------------
+// --- R1-21: Enter pressed while the Move march still shows the old brass `Move N` is spent -------------
 // (It never re-fires Move and never fires whatever the brass thing becomes after the click-through.)
 {
   await loadScenario(page, occ());
@@ -76,8 +83,9 @@ const occ = () =>
   const s = (await page.evaluate(() => window.__risk.getState()))!;
   const u = await ui(page);
   console.log(`   at Enter the strip read "${during.line}" · ${during.primary}`);
-  check(s.phase.kind === 'attack' && s.territories.ontario.armies === 9 && s.territories.greenland.armies === 1, `Enter during the march did nothing more (Ontario ${s.territories.ontario.armies}, Greenland ${s.territories.greenland.armies}, ${s.phase.kind})`, results);
-  check(u.line === 'Attack from Ontario · click an enemy' && u.primary === null, `settles on the source, nothing armed: ${u.line}`, results);
+  check(s.phase.kind === 'attack' && s.territories.ontario.armies === GUESS && s.territories.greenland.armies === 10 - GUESS, `Enter during the march did nothing more (Ontario ${s.territories.ontario.armies}, Greenland ${s.territories.greenland.armies}, ${s.phase.kind})`, results);
+  // v6 (A2 12): it settles on the source, or with the next good attack from it armed (never rolled: see above)
+  check((u.line === 'Attack from Ontario · click an enemy' && u.primary === null) || /^Ontario → [A-Z][\w ]+ · \d+%/.test(u.line), `settles on the source, nothing rolled: ${u.line}`, results);
   // Then the chain click arms and waits for Roll / Blitz.
   await clickT(page, 'alberta');
   await page.waitForTimeout(300);
@@ -178,15 +186,18 @@ const occ = () =>
   await loadScenario(page, scenario({ ural: [0, 12] }, { kind: 'attack' }));
   await clickT(page, 'siberia');
   await clickBtn(page, 'btn-blitz');
-  const got = await page.waitForFunction(() => window.__risk.ui().battle?.header === 'Siberia captured', null, { timeout: 5000 }).then(() => true, () => false);
-  check(got, 'blitz conquest: header "Siberia captured"', results);
+  // v6: the captured header says what it cost ('Siberia captured · cost N', Ural's losses) when it cost anything
+  const got = await page.waitForFunction(() => /^Siberia captured( · cost \d+)?$/.test(window.__risk.ui().battle?.header ?? ''), null, { timeout: 5000 }).then(() => true, () => false);
+  const hdr = (await ui(page)).battle?.header ?? '';
+  const lost = 12 - (await state(page))!.territories.ural.armies;
+  check(got && hdr === (lost > 0 ? `Siberia captured · cost ${lost}` : 'Siberia captured'), `blitz conquest: header "${hdr}" (Ural lost ${lost})`, results);
   const ph = (await state(page))!.phase.kind;
   if (ph === 'occupy') {
     await idle(page);
     await clickBtn(page, 'btn-move');
     await page.waitForTimeout(50);
     const h = (await ui(page)).battle?.header ?? null;
-    check(h !== 'Siberia captured', `Move clears the captured header at once (${h})`, results);
+    check(!/captured/.test(h ?? ''), `Move clears the captured header at once (${h})`, results);
   } else check(false, `expected an occupy step after the blitz (${ph})`, results);
 }
 

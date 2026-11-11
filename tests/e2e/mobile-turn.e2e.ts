@@ -1,6 +1,6 @@
 // A full human turn by taps only (docs/MOBILE.md §8) on the emulated iPhone 15 Pro in portrait and
 // landscape, and on the iPad Pro 11 in portrait (the stacked tablet dock): place with the stepper (−),
-// place the rest, the Turn Track to Attack, one Roll, Blitz to the capture, Occupy with the slider,
+// place the rest, the Turn Track to Attack, one Roll, Blitz to the capture, Occupy with the stepper (v6: no slider under a thumb),
 // the Track to Fortify, pick a route, `Move N · end turn`. After every step: the document never
 // scrolled or zoomed, the dock and seat pills sit inside the safe area, every dock control is ≥ 44 px (on
 // the phones every control in the UI: the dock, the top strip, the menu and Settings sheets).
@@ -112,6 +112,9 @@ async function run(dev: DeviceName): Promise<void> {
   check(s.territories.ural.armies === 16, `${tag} Place 4 → Ural 16 (${s.territories.ural.armies})`, results);
   await tapT(page, 'ukraine');
   await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 4000 });
+  // v6: the fullest action row (the dab, the stepper, Undo, Place; a hand of cards) keeps the primary on screen
+  const pb = await page.locator('[data-testid="btn-place"]').boundingBox();
+  check(!!pb && pb.x >= 0 && pb.x + pb.width <= vp.width + 0.5, `${tag} the full action row keeps Place on screen (${pb ? `${Math.round(pb.x)}–${Math.round(pb.x + pb.width)} of ${vp.width}` : 'none'})`, results);
   await tapId(page, 'btn-place');
   await idle(page);
   u = await ui(page);
@@ -154,19 +157,19 @@ async function run(dev: DeviceName): Promise<void> {
     const c = u.count!;
     check(c.control === 'slider' && u.primary === `Move ${c.value}`, `${tag} occupy: slider ${c.min}–${c.max} at ${c.value}, ${u.primary}`, results);
     await targets();
-    // v5.1 E2: the count starts collapsed (all but one chosen): its number is a word; a tap opens the slider.
-    const word = page.locator('[data-testid="count-expand"]');
-    check(await word.isVisible(), `${tag} occupy count collapsed to its number (${(await word.textContent())?.trim()})`, results);
-    await tapId(page, 'count-expand');
-    await page.waitForTimeout(120);
-    // A tap on the slider track sets the count (the left third).
-    const track = page.locator('[data-testid="count-slider"] .cs-track');
-    await track.waitFor({ state: 'visible', timeout: 3000 }).catch(async () => page.screenshot({ path: `artifacts/e2e/mobile-turn-${dev}-occupy.png` }));
-    const box = (await track.boundingBox())!;
-    await page.touchscreen.tap(box.x + box.width * 0.25, box.y + box.height / 2);
+    // v6: phones never get the hairline slider: the count is − N + (hold-to-repeat) at its default, whatever the
+    // range; a tap on − takes one back.
+    const folded = {
+      n: (await page.locator('[data-testid="count"]').first().textContent())?.trim(),
+      stepper: await page.locator('[data-testid="count-dec"]').isVisible(),
+      slider: await page.locator('[data-testid="count-slider"]').isVisible(),
+      word: await page.locator('[data-testid="count-expand"]').isVisible(),
+    };
+    check(folded.n === String(c.value) && folded.stepper && !folded.slider && !folded.word, `${tag} occupy count is the stepper at its default (${JSON.stringify(folded)})`, results);
+    await tapId(page, 'count-dec');
     await page.waitForTimeout(100);
     const v = (await ui(page)).count!.value;
-    check(v < c.value && v >= c.min, `${tag} a tap on the slider moves it (${c.value} → ${v})`, results);
+    check(v === c.value - 1 && v >= c.min, `${tag} a tap on − takes one back (${c.value} → ${v})`, results);
     await tapId(page, 'btn-move');
     await idle(page);
     await still('occupy');

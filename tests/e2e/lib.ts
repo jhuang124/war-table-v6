@@ -133,15 +133,16 @@ export async function seg(page: Page, id: string, force = false): Promise<void> 
 }
 
 /**
- * Set the one count control to `n` by mouse: the − / + stepper (≤ 6 options), or a click on the slider
- * track at n's position (> 6), nudged a pixel at a time until it reads n.
+ * Set the one count control to `n` by mouse: the − / + stepper when it shows (v6: every folded count, and every
+ * count on a phone), else a click on the slider track at n's position, nudged a pixel at a time until it reads n.
  */
 export async function setCount(page: Page, n: number): Promise<void> {
   const c = (await ui(page)).count;
   if (!c) throw new Error('no count control');
   await expandCount(page);
-  if (c.control === 'stepper') {
-    await page.locator('[data-testid="count-inc"]').waitFor({ state: 'visible', timeout: 3000 });
+  const inc = page.locator('[data-testid="count-inc"]');
+  if (c.control === 'stepper' || (await inc.isVisible().catch(() => false))) {
+    await inc.waitFor({ state: 'visible', timeout: 3000 });
     let v = c.value;
     while (v > n) {
       await clickBtn(page, 'count-dec');
@@ -170,8 +171,8 @@ export async function setCount(page: Page, n: number): Promise<void> {
 }
 
 /**
- * v5.1 E2: a collapsed count (occupy: all-but-one already chosen) shows only its number (`count-expand`);
- * a touch opens the stepper / slider. Opens it when it shows; true if it did.
+ * v5.1 E2 had a collapsed count (its number only, `count-expand`); v6 folds it to the − N + stepper instead, which
+ * setCount drives directly. Kept for older flows: opens the v5.1 word if one ever shows; true if it did.
  */
 export async function expandCount(page: Page): Promise<boolean> {
   const w = page.locator('[data-testid="count-expand"]').first();
