@@ -858,10 +858,11 @@ class Controller {
   // v5: the replay, voices, the holding dab, clickables, the camera lean
   /** The end-of-game replay showing now (GameVM.replay), and the last one built (the hook keeps it). */
   private replay: ReplayVM | null = null;
-  /** The e2e build (VITE_E2E) never holds the recap for the replay; the hook still builds it. */
+  /** The e2e build (VITE_E2E) never holds the recap for the replay (unless the URL says `?replay`); the hook still builds it. */
   private noReplay = (() => {
     try {
-      return !!(import.meta as unknown as { env?: { VITE_E2E?: string } }).env?.VITE_E2E;
+      const e2e = !!(import.meta as unknown as { env?: { VITE_E2E?: string } }).env?.VITE_E2E;
+      return e2e && !/[?&]replay\b/.test(globalThis.location?.search ?? '');
     } catch {
       return false;
     }
